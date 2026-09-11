@@ -315,3 +315,66 @@ confirm.
 
 **Phase 1 status: still BLOCKED.**
 
+## R. Second actual CI run result (real, not simulated)
+
+After the KSP fix (commit 4d5dab8), the workflow ran again and failed
+again -- **at a different, unrelated step**, not the same problem
+recurring. From the real GitHub Actions log the person pasted:
+
+```
+e: file:///home/runner/work/Aeriva/Aeriva/app/build.gradle.kts:26:9:
+Using 'jvmTarget: String' is an error. Please migrate to the
+compilerOptions DSL.
+FAILURE: Build failed with an exception.
+* Where: Build file '.../app/build.gradle.kts' line: 26
+* What went wrong: Script compilation error: Using 'jvmTarget: String'
+  is an error. Please migrate to the compilerOptions DSL.
+```
+
+### Root cause
+
+The Kotlin Gradle Plugin has fully removed the old
+`kotlinOptions { jvmTarget = "17" }` DSL (String-typed) -- it is now a
+hard script-compilation error, not a deprecation warning, at the Kotlin
+version in use. `app/build.gradle.kts` used that exact pattern. Once this
+was found, the same pattern was checked for everywhere else rather than
+fixed one file at a time across repeated CI runs: `grep -rln
+"kotlinOptions"` found the identical pattern in five more files --
+`network/monitor`, `core/database`, `core/logging`, `core/preferences`,
+`core/security` -- every Android-library module in the repo. All six
+would have failed the same way, sequentially, one CI run per file, if
+fixed reactively instead of exhaustively.
+
+### Fix
+
+All six files migrated to the current `compilerOptions` DSL:
+
+```kotlin
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+...
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+```
+
+placed as a top-level block (outside `android { }`), which is how this
+DSL is configured for both `kotlin.android` and `kotlin.jvm` modules
+alike. The old `kotlinOptions { }` block was removed entirely, not left
+empty. `core:model`, `core:common`, and `core:result` (the three
+`kotlin.jvm` modules) never used the old DSL and were not touched --
+confirmed by checking their build files directly, not assumed.
+
+### What this does NOT yet confirm
+
+Same caveat as section Q: this fix has not itself been run through CI as
+of writing this section. Two real, distinct problems have now been found
+and fixed by actually running this in CI -- exactly the kind of thing
+that could not be found by inspection alone in the original Phase 1
+validation gate. There may be more. Each fix in this file is being
+recorded as a diagnosis-and-fix pair with an explicit "not yet confirmed"
+note, not folded into a claim that the build now works.
+
+**Phase 1 status: still BLOCKED.**
+
