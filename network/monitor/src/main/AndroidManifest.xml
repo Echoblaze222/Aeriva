@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      Normal permission, granted automatically at install time, no
+      runtime dialog. Required to read network state via
+      ConnectivityManager. See Phase 0 platform validation and
+      developer.android.com/develop/connectivity/network-ops/reading-network-state.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+</manifest>

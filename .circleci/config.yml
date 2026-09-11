@@ -1,0 +1,106 @@
+version: 2.1
+
+orbs:
+  android: circleci/android@3.2.0
+
+# Assumes this Gradle project lives at "android/" in the repository root
+# (as delivered). If the repo root IS the Gradle project root instead,
+# remove the "android" path segment from every working_directory,
+# checksum path, and store_test_results/store_artifacts path below.
+#
+# The wrapper jar is intentionally not committed (see android/README.md)
+# -- the first real step of each job bootstraps it from the Docker/
+# machine image's pre-installed Gradle before anything else runs.
+
+jobs:
+  build_and_unit_test:
+    docker:
+      - image: cimg/android:2026.07
+    resource_class: large
+    steps:
+      - checkout
+
+      - run:
+          name: Generate Gradle wrapper (pins the version this project was authored against)
+          command: gradle wrapper --gradle-version 8.14
+          working_directory: android
+
+      - run:
+          name: Ensure Android SDK Platform 36 and matching build-tools are installed
+          command: |
+            yes | sdkmanager --licenses || true
+            sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - restore_cache:
+          keys:
+            - gradle-deps-{{ checksum "android/gradle/libs.versions.toml" }}
+
+      - run:
+          name: Assemble debug APK
+          command: ./gradlew assembleDebug --stacktrace
+          working_directory: android
+
+      - save_cache:
+          key: gradle-deps-{{ checksum "android/gradle/libs.versions.toml" }}
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
+
+      - run:
+          name: Run unit tests (all modules)
+          command: ./gradlew test --stacktrace
+          working_directory: android
+
+      - run:
+          name: Collect JUnit XML for CircleCI test insights
+          command: |
+            mkdir -p android/test-results
+            find android -path "*/build/test-results/*/*.xml" -exec cp {} android/test-results/ \;
+          when: always
+
+      - store_test_results:
+          path: android/test-results
+
+      - store_artifacts:
+          path: android/app/build/outputs/apk/debug
+
+  connected_android_test:
+    executor:
+      name: android/android_machine
+      resource_class: large
+      tag: default
+    steps:
+      - checkout
+
+      - run:
+          name: Generate Gradle wrapper (pins the version this project was authored against)
+          command: gradle wrapper --gradle-version 8.14
+          working_directory: android
+
+      - android/start_emulator_and_run_tests:
+          avd_name: aeriva-test
+          system_image: system-images;android-30;google_apis;x86_64
+          install_system_image: true
+          run_tests_working_directory: android
+          test_command: ./gradlew connectedAndroidTest --stacktrace
+          restore_gradle_cache_prefix: v1-aeriva
+          save_gradle_cache: true
+          kill_emulators: true
+
+      - run:
+          name: Collect JUnit XML for CircleCI test insights
+          command: |
+            mkdir -p android/test-results
+            find android -path "*/build/outputs/androidTest-results/*/*.xml" -exec cp {} android/test-results/ \;
+          when: always
+
+      - store_test_results:
+          path: android/test-results
+
+workflows:
+  build_test_and_validate:
+    jobs:
+      - build_and_unit_test
+      - connected_android_test:
+          requires:
+            - build_and_unit_test
