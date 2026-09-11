@@ -15,13 +15,17 @@ room = "2.8.4"
 datastore = "1.2.1"
 securityCrypto = "1.1.0"
 coreKtx = "1.19.0"
-# UNVERIFIED PATCH SUFFIX: KSP versions follow
-# "{matching-kotlin-version}-{ksp-patch}". Confirm the exact patch for
-# Kotlin 2.3.21 at https://github.com/google/ksp/releases before the
-# first real build -- do not trust this value without checking, same
-# treatment as the open VPN foreground-service-type item in
-# PHASE_0_PLATFORM_VALIDATION.md.
-ksp = "2.3.21-2.0.2"
+# KSP versioning note: as of KSP 2.3.0, KSP versions are plain semantic
+# versions independent of any specific Kotlin compiler version --
+# "{kotlin-version}-{ksp-patch}" (the format used through KSP 2.2.x) no
+# longer applies. This was verified from google/ksp's own release notes
+# (2.3.0: "KSP version is no longer tied to the Kotlin compiler version")
+# and https://github.com/google/ksp/releases, which lists 2.3.11 as the
+# latest release. An earlier version of this file used the old
+# "2.3.21-2.0.2" format as an unverified placeholder; that value does
+# not exist and failed CI (UnknownPluginException) -- this is the fix,
+# not another guess.
+ksp = "2.3.11"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }

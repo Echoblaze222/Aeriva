@@ -266,3 +266,52 @@ must be updated again once an actual CI run completes, with real per-job
 outcomes (PASS/FAIL) replacing every "NOT YET RUN" above, before Phase 1
 can be reconsidered.
 
+## Q. First actual CI run result (real, not simulated)
+
+The workflow ran on push (commit 947bb04). Result, from the real GitHub
+Actions log the person pasted:
+
+- **build**: FAIL. `Assemble (compiles every module, including Android
+  sources)` failed after 40s with:
+  ```
+  FAILURE: Build failed with an exception.
+  * What went wrong:
+  Plugin [id: 'com.google.devtools.ksp', version: '2.3.21-2.0.2', apply: false]
+  was not found in any of the following sources: ...
+  ```
+- **unit-tests**, **static-checks**, **instrumented-tests-emulator**: did
+  not run (skipped -- all three `needs: build`, which failed).
+
+### Root cause
+
+`gradle/libs.versions.toml`'s `ksp` value, `"2.3.21-2.0.2"`, does not exist.
+It was written earlier in this project following the old KSP versioning
+scheme (`{kotlin-version}-{ksp-patch}`), and flagged at the time as an
+explicitly **unverified placeholder** with an instruction to confirm it
+before the first real build. That confirmation never happened before now
+because no build could run until this commit. As of KSP 2.3.0, KSP
+dropped that versioning scheme entirely -- current KSP releases are plain
+semantic versions (2.3.11 is latest, per google/ksp's own release notes
+and release list), independent of the Kotlin compiler version in use.
+
+### Fix
+
+`ksp` set to `"2.3.11"` in `gradle/libs.versions.toml`, with a comment
+explaining the versioning scheme change and citing where this was
+verified (google/ksp release notes, not assumed). This is a one-line,
+targeted fix for the exact reported failure -- no other version was
+touched, no architecture changed.
+
+### What this does NOT yet confirm
+
+This fix has not itself been run through CI yet as of writing this
+section. It removes the specific, named cause of this failure; it does
+not guarantee the next run succeeds -- there could be a next problem
+behind it (another unverified assumption, a real compile error in one of
+the modules that were never built before, etc.). Do not treat this
+section as "Phase 1 validated" or "CI passing" -- it is a diagnosis and a
+fix for one specific, evidenced failure, awaiting the next real run to
+confirm.
+
+**Phase 1 status: still BLOCKED.**
+
