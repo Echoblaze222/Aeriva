@@ -7,8 +7,8 @@
         android:label="AERIVA">
         <!--
           No launcher activity yet. Screens are feature-module work
-          (architecture doc Section 4, feature/*) that hasn't started --
-          this manifest exists so :app is buildable during Phase 2, not
+          (architecture doc Section 4, feature/*) that hasn't started.
+          This manifest exists so :app is buildable during Phase 2, not
           so the app is installable/launchable yet.
         -->
     </application>
