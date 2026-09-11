@@ -27,6 +27,17 @@ sealed interface AerivaResult<out T> {
 sealed interface AerivaError {
     data class Unsupported(val reason: String) : AerivaError
     data class PermissionRequired(val permission: String) : AerivaError
+
+    /**
+     * Local storage (database or preferences file) could not be read.
+     * Per Phase 0 platform validation's "Database migration failure"
+     * scenario: this must never be silently swallowed or auto-wiped by
+     * the caller -- it exists so the UI layer can show an explicit
+     * recovery state instead of either crashing or pretending the data
+     * is simply empty.
+     */
+    data class DataCorrupted(val throwable: Throwable) : AerivaError
+
     data class Unknown(val throwable: Throwable) : AerivaError
 }
 

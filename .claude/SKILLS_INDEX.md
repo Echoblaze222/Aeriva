@@ -1,0 +1,21 @@
+# AERIVA Skills Index
+
+- `00-core-engineering/SKILL.md`
+- `01-android-native/SKILL.md`
+- `02-data-usage/SKILL.md`
+- `03-connectivity-intelligence/SKILL.md`
+- `04-community-intelligence/SKILL.md`
+- `05-network-optimization/SKILL.md`
+- `06-ui-ux/SKILL.md`
+- `07-security-privacy/SKILL.md`
+- `08-local-first-sync/SKILL.md`
+- `09-database-preferences/SKILL.md`
+- `10-background-work/SKILL.md`
+- `11-testing-verification/SKILL.md`
+- `12-performance-observability/SKILL.md`
+- `13-community-data-quality/SKILL.md`
+- `14-release-engineering/SKILL.md`
+- `15-cross-platform-future/SKILL.md`
+- `16-task-execution/SKILL.md`
+- `17-documentation-standards/SKILL.md`
+- `18-dependency-governance/SKILL.md`

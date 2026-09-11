@@ -21,12 +21,12 @@ include(":core:common")
 include(":core:model")
 include(":core:result")
 include(":core:logging")
+include(":core:database")
+include(":core:preferences")
 include(":network:monitor")
 
 // Declared in the architecture doc's module map (Section 4) but not
 // implemented yet -- included here as dead references would fail Gradle
-// configuration with "project directory does not exist". Uncomment each
-// as it's actually built, not before:
+// configuration with "project directory does not exist". Uncomment as
+// each is actually built, not before:
 // include(":core:security")
-// include(":core:database")
-// include(":core:preferences")
