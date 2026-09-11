@@ -2,7 +2,9 @@ package com.aeriva.core.database
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 
 /**
  * Hand-implemented fake -- NetworkStateHistoryDao is a plain interface
@@ -29,13 +31,10 @@ class FakeNetworkStateHistoryDao : NetworkStateHistoryDao {
         return state.value.take(limit)
     }
 
-    override fun observeRecent(limit: Int): Flow<List<NetworkStateHistoryEntity>> =
-        state.asStateFlow().let { flow ->
-            kotlinx.coroutines.flow.flow {
-                failNextWith?.let { throw it.also { failNextWith = null } }
-                flow.collect { emit(it.take(limit)) }
-            }
-        }
+    override fun observeRecent(limit: Int): Flow<List<NetworkStateHistoryEntity>> = flow {
+        failNextWith?.let { throw it.also { failNextWith = null } }
+        emitAll(state.map { entities -> entities.take(limit) })
+    }
 
     override suspend fun deleteOlderThan(beforeEpochMillis: Long): Int {
         failNextWith?.let { throw it.also { failNextWith = null } }

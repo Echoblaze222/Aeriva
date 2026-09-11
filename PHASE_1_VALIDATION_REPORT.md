@@ -1,0 +1,216 @@
+# PHASE 1 VALIDATION REPORT
+
+## A. Validation date
+2026-09-11
+
+## B. Repository/commit validated
+Echoblaze222/Aeriva, branch main, commit d7ba9dc (pre-validation HEAD at the
+start of this pass) plus the fixes described in section L, committed at the
+end of this pass (final hash in section 11 of the response, and at the
+bottom of this file once committed).
+
+## C. Build command executed
+None succeeded. Attempted:
+
+```
+ls gradlew gradlew.bat gradle/wrapper        # no wrapper committed in this repo
+curl -sS -D - -o /dev/null https://services.gradle.org/distributions/gradle-8.14-bin.zip
+curl -sS -D - -o /dev/null https://repo1.maven.org/maven2/
+curl -sS -D - -o /dev/null https://dl.google.com/dl/android/maven2/
+apt-cache policy gradle
+which gradle kotlinc
+```
+
+## D. Build result
+**BLOCKED.**
+
+Evidence:
+- No `gradlew` / `gradle/wrapper/` is committed to this repository (by design --
+  `.circleci/config.yml` bootstraps Gradle from the CI image's pre-installed
+  version, which does not exist in this environment).
+- `curl` to `services.gradle.org` (Gradle distribution) returned
+  `HTTP/2 403`, header `x-deny-reason: host_not_allowed`.
+- `curl` to `repo1.maven.org` (Maven Central, source of `kotlin-stdlib`,
+  `kotlinx-coroutines`, JUnit, etc. for every module including the pure-Kotlin
+  ones) returned `HTTP/2 403`, header `x-deny-reason: host_not_allowed`.
+- `curl` to `dl.google.com` (Google's Maven, source of AGP, Room, DataStore,
+  security-crypto, all AndroidX) returned the same `403 host_not_allowed`.
+- `apt-cache policy gradle` shows only Gradle 4.4.1 available via the Ubuntu
+  package mirror (`archive.ubuntu.com`, which is allowlisted) -- far below
+  what this project's `libs.versions.toml` requires (Gradle 8.13+ for AGP
+  8.13.2), and irrelevant regardless since Maven Central/Google Maven are
+  unreachable for dependency resolution either way.
+- `which gradle kotlinc` returned nothing -- neither tool is installed.
+
+This container's network egress allowlist (visible in its own
+configuration) permits only: api.anthropic.com, api.github.com,
+archive.ubuntu.com, codeload.github.com, crates.io, files.pythonhosted.org,
+github.com, index.crates.io, npmjs.com/npmjs.org and registry,
+pythonhosted.org, raw.githubusercontent.com, registry.yarnpkg.com,
+release-assets.githubusercontent.com, security.ubuntu.com,
+static.crates.io, www.npmjs.com/org, yarnpkg.com. Neither Maven Central nor
+Google's Maven repository is on that list. This makes a real Android/Gradle
+build **structurally impossible in this environment**, independent of
+effort -- not a transient failure and not something a retry or a different
+command fixes.
+
+## E. Unit tests executed
+None. Running `./gradlew test` (or any equivalent) requires the same blocked
+build pipeline as section D. There is no way to execute JUnit inside this
+container without Gradle successfully resolving `kotlin-stdlib` and JUnit
+from a Maven repository.
+
+## F. Unit test results
+**BLOCKED** for the same reason as D. 45 unit tests exist across
+core:common (1), core:result (5), core:database (5), core:preferences (4),
+core:security (6), network:monitor (existing suite from before this
+validation pass). None have been executed. What follows is what I found by
+close manual re-reading of every new source file and its matching test,
+which is evidence of code review, not test execution, and I am not
+reporting it as PASS:
+- Verified by re-reading: brace balance across every new `.kt` file (script
+  check, all matched), import correctness against each file's usage,
+  `AerivaResult`/`AerivaError` construction matches the sealed type
+  definitions, no unresolved symbol I could spot by inspection.
+- Found and fixed one real issue: `FakeNetworkStateHistoryDao.observeRecent()`
+  used an unnecessarily indirect nested-flow-builder construction. Logically
+  it should have worked, but its correctness was harder to verify by
+  inspection than it should be for test-support code, which is itself a
+  quality problem in code whose only job is to make tests trustworthy.
+  Rewritten using `flow { emitAll(...) }`, a standard, directly-verifiable
+  pattern. See section L.
+
+## G. Instrumented tests executed
+None -- same blocked build.
+
+## H. Physical-device tests executed
+**HARDWARE TEST NOT EXECUTED.**
+
+Reason: this environment has no Android device, no emulator, and (per
+section D) no way to even produce a build artifact to install on one if a
+device were attached. The Keystore-backed round-trip test
+(`AerivaSecureStorageInstrumentedTest`) and the Room DAO instrumented test
+(`NetworkStateHistoryDaoTest`) both require real Android Keystore /
+SQLite-on-device behavior that cannot be simulated here. Marking these as
+passed would be false. They remain unrun.
+
+## I. Security validation results
+**NOT EXECUTED** (requires the blocked build + a device, same as G/H).
+
+What I did instead -- a manual logic walkthrough against each scenario the
+validation gate asked about, which is review, not proof:
+
+| Scenario | Code path reviewed | Notes |
+|---|---|---|
+| secure write | `EncryptedPreferencesSecureStorage.set` -> `SecureKeyValueStore.putString` -> `SharedPreferencesKeyValueStore` (commit=true) | Logic present; unverified without Keystore |
+| secure read | `.get` -> `getString` | Logic present; unverified |
+| update | `set` on existing key overwrites (same code path) | Logic present; unverified |
+| delete | `remove` -> `SharedPreferences.Editor.remove` | Logic present; unverified |
+| missing values | `get` returns `null` when absent (default `getString(key, null)`) | Logic present; unverified |
+| application restart | Not applicable to unit-testable logic -- depends on the real encrypted file surviving process death, which only a device test proves | **Cannot be validated without a device** |
+| encrypted file persistence | Same as above | **Cannot be validated without a device** |
+| corrupted encrypted storage | No explicit corrupted-file-but-key-valid path exists in `AerivaSecureStorageFactory` today -- only "key unusable" is handled (see next row). If the file itself is corrupted independently of the key, `EncryptedSharedPreferences.create()`'s behavior was not something I could verify without running it. **This is a real gap, not a fix** -- flagged in section K/M rather than silently left out. |
+| unavailable/lost Keystore key | `AerivaSecureStorageFactory.create()` catches `Exception` from `buildEncryptedPreferences`, deletes the file, rebuilds once | Logic present; matches the deliberate design in the validation request; unverified against a real Keystore |
+| automatic encrypted-storage recovery after unrecoverable Keystore loss | Same as above -- **this behavior is unchanged**, as instructed. I did not make it symmetrical with the database/preferences manual-recovery pattern. | Confirmed unchanged by diff review |
+
+No hardcoded secrets, no plaintext writes of sensitive values, and no
+logging of the actual stored value were found anywhere in `core:security`
+(logging calls only log the operation name and exceptions, never `value`
+parameters) -- confirmed by direct reading of every log call in the module.
+
+## J. Module/architecture validation
+**PASS**, by static inspection (this section is genuinely inspectable
+without a build, unlike compilation correctness):
+
+- All seven Phase 1 modules exist and are included in `settings.gradle.kts`:
+  `core:common`, `core:model`, `core:result`, `core:logging`,
+  `core:database`, `core:preferences`, `core:security`. No module is
+  commented out.
+- Dependency graph (from every `build.gradle.kts`'s `project(":...")`
+  declarations):
+  - `network:monitor` -> `core:model`, `core:logging`
+  - `core:database` -> `core:model`, `core:result`, `core:logging`
+  - `core:preferences` -> `core:result`, `core:logging`
+  - `core:security` -> `core:common`, `core:result`, `core:logging`
+  - `core:common`, `core:model`, `core:result`, `core:logging` declare no
+    `project()` dependencies of their own (leaf modules).
+  - No cycle exists. No core module depends on `network:monitor` or `app`
+    (correct direction -- core is depended on, not depending).
+- Android-framework imports (`grep "^import android"` across every
+  module's `src/main`) are confined to platform-adapter files only:
+  `AndroidLogcatLogger`, `NetworkHistoryRepository`/`AerivaDatabaseProvider`
+  (Room/SQLite exception types), `AerivaPreferencesFactory`,
+  `AerivaSecureStorageFactory`/`SharedPreferencesKeyValueStore`,
+  `AndroidNetworkMonitor`/`TransportConstantMapper`. `core:common`,
+  `core:model`, and `core:result` have zero `android.*` imports, confirmed
+  by direct grep with no matches.
+- No duplicated infrastructure found (one dispatcher abstraction, one
+  result type, one logger interface, each used consistently rather than
+  reimplemented per module).
+
+## K. Problems discovered
+1. `FakeNetworkStateHistoryDao.observeRecent()` was written in an
+   unnecessarily indirect way (see F). Fixed.
+2. **Real, unresolved gap:** `AerivaSecureStorageFactory` only handles the
+   "Keystore key lost/invalid" failure mode. A distinct failure mode --
+   the encrypted preferences *file* itself corrupted while the Keystore key
+   is still valid -- is not explicitly handled or tested. Whether
+   `EncryptedSharedPreferences.create()` throws in that case (and would
+   therefore be caught by the existing `catch (e: Exception)`) or fails
+   more subtly is something I could not determine without running it.
+   I have not "fixed" this because I cannot verify a fix without execution,
+   and the validation gate explicitly says not to make unverified fixes
+   final. Flagged as a remaining risk (section M).
+3. `core/database/schemas/` (the Room schema-export directory referenced by
+   `ksp { arg("room.schemaLocation", ...) } }`) does not exist yet -- it can
+   only be generated by a real KSP-processed build, which is blocked. Not a
+   defect in the configuration itself, but it means the migration-testing
+   infrastructure is configured, not yet populated.
+4. The exact KSP plugin patch version for Kotlin 2.3.21 remains unverified
+   (already flagged directly in `libs.versions.toml` before this pass).
+
+No TODO/FIXME markers, no `println`/`printStackTrace`, no `GlobalScope`
+usage, no empty catch blocks, and no hardcoded secret-shaped strings were
+found anywhere in the codebase (all four checked by direct grep across every
+`.kt` file, zero matches each).
+
+## L. Fixes made
+- `core/database/src/test/kotlin/com/aeriva/core/database/FakeNetworkStateHistoryDao.kt`:
+  simplified `observeRecent()` from a nested nameshadowed flow-builder
+  construction to `flow { ...; emitAll(state.map { ... }) }`. Same behavior,
+  directly verifiable by reading instead of requiring careful tracing.
+
+No production (`src/main`) code was changed in this pass -- everything else
+found was a gap to flag (K.2, K.3), not something I could safely alter
+without a build to verify the change against.
+
+## M. Remaining risks
+1. **Nothing in this repository has ever been compiled.** Every risk below
+   is downstream of that one fact. A real `./gradlew build` may surface
+   import errors, type mismatches, or KSP/Room annotation problems that
+   code review cannot guarantee catching.
+2. Corrupted-encrypted-file-with-valid-key handling in `core:security` is
+   unverified (K.2).
+3. Room schema export has never run, so the migration-testing
+   infrastructure is unproven (K.3).
+4. KSP plugin version is an unverified placeholder (K.4).
+5. All "logic present, unverified" rows in section I remain genuinely
+   unverified until a device runs them.
+6. `DataStoreAerivaPreferencesTest`'s assumption -- that
+   `datastore-preferences` is usable on a plain JVM test classpath without
+   Robolectric -- was already flagged as unconfirmed when written, and
+   still is.
+
+## N. Tests that could not be executed and why
+All of them (unit, instrumented, and device) -- see sections D through H
+for the single root cause (no reachable Gradle distribution or Maven
+repository in this environment's network allowlist) and section H for the
+additional device-specific reason.
+
+## O. Final Phase 1 status
+**BLOCKED** -- not VALIDATED, not FAILED. No known defect was found that
+would make the implementation wrong, but "no known defect from reading the
+code" is explicitly not the bar this gate sets, and I'm not calling it met.
+Phase 1 cannot be declared validated until sections D through H are actually
+run, in an environment that can reach Gradle/Maven and, for H, real Android
+hardware.
