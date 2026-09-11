@@ -1,0 +1,205 @@
+name: CI
+
+# Runs on GitHub-hosted runners, which have normal, unrestricted internet
+# access to Maven Central / Google's Maven / Gradle's distribution server.
+# This is NOT true of the sandboxed container used for local development in
+# this project's chat sessions -- see PHASE_1_VALIDATION_REPORT.md for why
+# a build could not be executed there. Nothing about that limitation
+# applies here.
+#
+# Jobs are deliberately kept separate (build / unit-tests / static-checks /
+# instrumented-tests) rather than one big job, so each category's pass/fail
+# is independently visible -- this repo's validation process treats "build
+# passed" and "tests passed" as distinct claims, not one bundled status.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same branch/PR instead of letting them
+# queue -- keeps feedback fast when pushing several times in a row from a
+# phone.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Matches compileOptions/kotlinOptions jvmTarget = "17" in every module's
+  # build.gradle.kts. Do not change this here without changing it there.
+  JAVA_VERSION: "17"
+
+jobs:
+  build:
+    name: Build (Android compilation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        # Installs cmdline-tools and accepts SDK licenses. Does not
+        # pre-install a specific platform/build-tools version -- AGP
+        # downloads whichever compileSdk/build-tools its own version
+        # (gradle/libs.versions.toml: agp) requires once licenses are
+        # accepted. Determinism here comes from that version being pinned
+        # in the version catalog, not from a hand-picked SDK package list
+        # that could silently drift out of sync with it.
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        # Validates gradle-wrapper.jar's checksum against Gradle's own
+        # published list and caches dependencies/build output. This is
+        # the same verification this repo's own wrapper jar was already
+        # manually checked against when it was added (see the commit that
+        # introduced gradle/wrapper/) -- this step re-does that check on
+        # every run rather than trusting it once.
+
+      - name: Gradle version sanity check
+        run: ./gradlew --version
+
+      - name: Assemble (compiles every module, including Android sources)
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload build outputs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-reports
+          path: |
+            **/build/reports/**
+          retention-days: 7
+
+  unit-tests:
+    name: Unit tests (JVM)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run unit tests
+        # `test` covers the pure-Kotlin modules (core:common, core:model,
+        # core:result), each of which has its own `test` task via the
+        # kotlin.jvm plugin. `testDebugUnitTest` covers the Android
+        # library modules (core:logging, core:database, core:preferences,
+        # core:security, network:monitor), whose unit tests run against
+        # the debug variant. Both are needed -- neither alone covers every
+        # module in this repo.
+        run: ./gradlew test testDebugUnitTest --stacktrace
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: |
+            **/build/reports/tests/**
+            **/build/test-results/**
+          retention-days: 14
+
+  static-checks:
+    name: Static checks (Android Lint)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Android Lint
+        # No separate static-analysis tool (ktlint/detekt) is configured
+        # in this repo yet -- adding one is a real decision with its own
+        # rule-set choices, not something to bolt on silently inside a CI
+        # setup task. Android Lint is already available for free from the
+        # AGP version already declared, so it is what "relevant static
+        # checks" means right now. Revisit if/when ktlint or detekt is
+        # deliberately added.
+        run: ./gradlew lint --stacktrace
+
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: |
+            **/build/reports/lint-results*.html
+            **/build/reports/lint-results*.xml
+          retention-days: 14
+
+  instrumented-tests-emulator:
+    name: Instrumented tests (Android EMULATOR -- not a physical device)
+    needs: build
+    # macOS runners are used here because they are the GitHub-hosted option
+    # with reliable hardware-accelerated emulation for
+    # reactivecircus/android-emulator-runner. This job proves the Room DAO
+    # and Keystore-backed storage code paths run correctly against a real
+    # Android runtime and a real (virtual) Keystore -- it does NOT prove
+    # behavior that only shows up on real hardware (OEM-specific Keystore
+    # implementations, real battery/Doze/background-restriction behavior,
+    # physical sensor/radio behavior). Per this repo's validation
+    # documentation, "instrumented (emulator)" and "physical device" are
+    # tracked as separate rows, not treated as the same thing.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run instrumented tests on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          disable-animations: true
+          script: ./gradlew connectedDebugAndroidTest --stacktrace
+
+      - name: Upload instrumented test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: instrumented-test-reports
+          path: |
+            **/build/reports/androidTests/**
+            **/build/outputs/androidTest-results/**
+          retention-days: 14

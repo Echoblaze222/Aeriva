@@ -214,3 +214,55 @@ code" is explicitly not the bar this gate sets, and I'm not calling it met.
 Phase 1 cannot be declared validated until sections D through H are actually
 run, in an environment that can reach Gradle/Maven and, for H, real Android
 hardware.
+
+---
+
+## P. CI status update (added after this report was first written)
+
+A GitHub Actions workflow (`.github/workflows/ci.yml`) now exists and can
+execute everything sections D-H could not, because GitHub-hosted runners
+have normal, unrestricted internet access -- the block described in
+sections D-H was specific to the sandboxed local development container,
+not to Android/Gradle/Maven themselves.
+
+**This section is being added at the same time the workflow is being
+added. No CI run has completed yet as of this commit.** Nothing below is a
+claim that Phase 1 is now validated.
+
+### Execution-category matrix (going forward, keep this current)
+
+| Category | Where it can run | Status as of this commit |
+|---|---|---|
+| Build / Android compilation | CI job `build` (`./gradlew assembleDebug`) | NOT YET RUN |
+| Unit tests (JVM) | CI job `unit-tests` (`./gradlew test testDebugUnitTest`) | NOT YET RUN |
+| Static checks (Android Lint) | CI job `static-checks` (`./gradlew lint`) | NOT YET RUN |
+| Instrumented tests | CI job `instrumented-tests-emulator`, on a GitHub-hosted **emulator** (`./gradlew connectedDebugAndroidTest`) | NOT YET RUN |
+| Physical-device tests | Real Android hardware only -- no CI job substitutes for this | NOT EXECUTED, still requires manual execution on a real device |
+| Local sandbox execution | This project's chat-session container | Confirmed structurally BLOCKED (see sections D-H) -- will remain so regardless of CI's outcome, since the sandbox's network allowlist is unrelated to GitHub Actions' |
+
+An **emulator** run passing is meaningfully different from a **physical
+device** run passing -- an emulator does not exercise OEM-specific
+Keystore implementations, real battery/Doze/background-restriction
+behavior, or real radio/sensor hardware. Both rows are tracked separately
+above and must stay separate in every future update to this file; do not
+collapse "instrumented (emulator)" into "device tests" language.
+
+### Gradle wrapper
+
+`gradlew`, `gradlew.bat`, and `gradle/wrapper/gradle-wrapper.jar` are now
+committed (they were previously absent -- see the original section D).
+The wrapper jar was fetched from the official `gradle/gradle` GitHub
+repository at tag `v8.14.2` and its SHA-256 was verified against Gradle's
+own published checksum list at gradle.org/release-checksums before being
+committed -- it was not downloaded from an arbitrary or unverified source.
+`gradle-wrapper.properties`'s `distributionSha256Sum` was set the same way,
+from the same published list, not invented.
+
+### Updated final status
+
+**Phase 1 status remains BLOCKED**, not VALIDATED, per explicit instruction
+-- a workflow file existing is infrastructure, not a passing run. This file
+must be updated again once an actual CI run completes, with real per-job
+outcomes (PASS/FAIL) replacing every "NOT YET RUN" above, before Phase 1
+can be reconsidered.
+
