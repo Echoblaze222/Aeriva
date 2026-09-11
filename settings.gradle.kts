@@ -17,7 +17,9 @@ dependencyResolutionManagement {
 rootProject.name = "aeriva"
 
 include(":app")
+include(":core:common")
 include(":core:model")
+include(":core:result")
 include(":core:logging")
 include(":network:monitor")
 
@@ -25,8 +27,6 @@ include(":network:monitor")
 // implemented yet -- included here as dead references would fail Gradle
 // configuration with "project directory does not exist". Uncomment each
 // as it's actually built, not before:
-// include(":core:common")
-// include(":core:result")
 // include(":core:security")
 // include(":core:database")
 // include(":core:preferences")
