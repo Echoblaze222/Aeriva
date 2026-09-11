@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:name=".AerivaApplication"
+        android:allowBackup="false"
+        android:label="AERIVA">
+        <!--
+          No launcher activity yet. Screens are feature-module work
+          (architecture doc Section 4, feature/*) that hasn't started --
+          this manifest exists so :app is buildable during Phase 2, not
+          so the app is installable/launchable yet.
+        -->
+    </application>
+
+</manifest>
