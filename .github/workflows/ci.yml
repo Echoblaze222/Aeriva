@@ -208,34 +208,18 @@ jobs:
           # is actually registered -- this action's own "wait for boot"
           # step doesn't cover that gap. Confirmed from this repo's own
           # CI run: APK install failed with "Can't find service: package"
-          # even though the emulator had booted (a TimeoutException
-          # fetching device properties immediately before it in the same
-          # log is the same underlying readiness gap). Polling for the
-          # actual service instead of guessing a fixed sleep duration --
-          # deterministic wait for the real condition, not a fragile
-          # arbitrary delay.
+          # even though the emulator had booted.
           #
-          # NOT using the GNU `timeout` command here -- this job runs on
-          # macos-15-intel (see runs-on above), and `timeout` is a GNU
-          # coreutils command that does not exist on macOS's stock shell
-          # by default. Confirmed from this repo's own CI run:
-          # "/bin/sh: timeout: command not found", exit 127. A manual
-          # attempt-counter loop is portable across macOS and Linux
-          # without installing anything extra.
-          script: |
-            echo "Waiting for the package service to be ready..."
-            attempt=0
-            max_attempts=90
-            until adb shell service check package 2>/dev/null | grep -q "package: found"; do
-              attempt=$((attempt + 1))
-              if [ "$attempt" -ge "$max_attempts" ]; then
-                echo "Timed out waiting for the package service." >&2
-                exit 1
-              fi
-              sleep 2
-            done
-            echo "Package service ready."
-            ./gradlew connectedDebugAndroidTest --stacktrace
+          # The wait/retry logic lives in a real script file
+          # (.github/scripts/wait-for-package-service.sh), not inline
+          # here. Confirmed from this repo's own CI run: this action
+          # executes each line of a multi-line `script:` block as its
+          # own separate `/bin/sh -c` call, not as one continuous
+          # script -- a multi-line `until ... do ... done` loop written
+          # directly in this field breaks ("unexpected end of file")
+          # because `do`/`done` end up running as unrelated commands.
+          # Calling a script file as a single line sidesteps that.
+          script: bash .github/scripts/wait-for-package-service.sh
 
       - name: Upload instrumented test reports
         if: always()

@@ -777,3 +777,50 @@ four consecutive runs now. instrumented-tests-emulator's fix here is
 unconfirmed until the next real run.
 
 **Phase 1 status: still BLOCKED.**
+
+## Z. Eleventh real problem: this action splits multi-line `script:` per-line
+
+Run #13 (after commit bc8a0f1) failed differently again -- the
+`timeout`-command mistake was gone, but a new, structural failure
+appeared:
+
+```
+/bin/sh -c echo "Waiting for the package service to be ready..."
+/bin/sh -c attempt=0
+/bin/sh -c max_attempts=90
+/bin/sh -c until adb shell service check package 2>/dev/null | grep -q "package: found"; do
+/bin/sh: -c: line 1: syntax error: unexpected end of file
+Error: The process '/bin/sh' failed with exit code 2
+```
+
+### Root cause
+
+`reactivecircus/android-emulator-runner`'s `script:` input, confirmed
+from this exact log, executes **each line** of a multi-line YAML block
+scalar as its **own separate** `/bin/sh -c` invocation -- not as one
+continuous script. My `until ... do ... done` loop's `do` line ran as
+its own isolated command with no matching `done` in the same shell
+invocation, hence "unexpected end of file". This is a real, structural
+property of this action's `script:` input that no amount of
+shell-syntax fixing within that field would have solved -- confirmed
+by seeing each line logged as its own separate `/bin/sh -c` call.
+
+### Fix
+
+Moved the wait/retry/run logic out of the workflow YAML entirely, into
+a real script file: `.github/scripts/wait-for-package-service.sh`
+(executable bit set). `script:` now calls it as a single line:
+`bash .github/scripts/wait-for-package-service.sh`. A single line
+cannot be split per-line into something broken, and the script file
+itself can use normal multi-line bash control flow freely, since it
+runs as one `bash` invocation, not through this action's line-by-line
+splitting.
+
+### What this does NOT yet confirm
+
+Eleven distinct real problems now found and fixed via actual CI runs.
+build/unit-tests/static-checks remain confirmed PASS across five
+consecutive runs now. instrumented-tests-emulator's fix here is
+unconfirmed until the next real run.
+
+**Phase 1 status: still BLOCKED.**
