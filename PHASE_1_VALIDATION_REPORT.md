@@ -616,3 +616,59 @@ scheduler, Room schema export mechanism, emulator runner architecture).
 None of today's fixes are confirmed until the next real run.
 
 **Phase 1 status: still BLOCKED.**
+
+## W. Real milestone: build, unit-tests, and static-checks all PASS for the first time
+
+Run #10 (commit 2754aec) is the first run where three of four job
+categories are **confirmed PASS**, not just "further than last time":
+
+- **build**: PASS
+- **unit-tests**: PASS -- confirms section U's coroutine-scheduler fix
+  actually worked
+- **static-checks**: PASS
+- **instrumented-tests-emulator**: FAILED, new distinct cause (below).
+  The Room schema-export fix from section V did work -- the log shows
+  `core:database:copyRoomSchemasToAndroidTestAssetsDebugAndroidTest`
+  running cleanly, and the emulator itself booted and ran (unlike the
+  previous timeout) -- confirming both the architecture fix (V.2) and
+  the Room plugin fix (V.1) that could not be confirmed as of section V.
+
+### Remaining failure: `ClassNotFoundException` on the emulator
+
+```
+java.lang.RuntimeException: Unable to instantiate instrumentation
+ComponentInfo{com.aeriva.core.database.test/androidx.test.runner.AndroidJUnitRunner}:
+java.lang.ClassNotFoundException: Didn't find class
+"androidx.test.runner.AndroidJUnitRunner" on path: ...
+Task :core:database:connectedDebugAndroidTest FAILED
+```
+
+**Root cause:** every module's `testInstrumentationRunner` was set to
+`androidx.test.runner.AndroidJUnitRunner`, but the dependency that
+actually provides that class -- `androidx.test:runner` -- was never
+declared. `androidx.test.ext:junit` (which every module did have) only
+provides the `@RunWith(AndroidJUnit4::class)` JUnit4 runner annotation
+class; it is a different artifact from the instrumentation bootstrap
+class the emulator tries to load first. This is exactly the kind of gap
+that inspection missed and only an actual device/emulator run surfaces.
+
+**Fix:** added `androidx.test:runner:1.7.0` (same release line as
+`androidx.test:core`, per Android's own dependency-setup docs) to
+`network:monitor`, `core:database`, and `core:security` -- the three
+modules with real `androidTest` source sets. Also removed
+`core:preferences`'s `testInstrumentationRunner` declaration -- that
+module has no `androidTest` source set at all, so the setting was dead,
+slightly misleading configuration, not a functional problem; cleaned up
+while already in this area, not scope creep.
+
+### What this does NOT yet confirm
+
+Eight distinct real problems now found and fixed via actual CI runs.
+Three of four job categories are now genuinely confirmed passing, which
+is real, verified progress -- not "further than last time" language.
+`instrumented-tests-emulator` needs the next run to confirm this fix;
+physical-device tests remain untouched, as always.
+
+**Phase 1 status: still BLOCKED** (3/4 job categories confirmed PASS;
+instrumented-tests-emulator fix unconfirmed; physical-device tests never
+attempted).
