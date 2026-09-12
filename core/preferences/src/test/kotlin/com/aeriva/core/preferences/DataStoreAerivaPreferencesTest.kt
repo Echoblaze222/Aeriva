@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.aeriva.core.logging.NoOpLogger
 import com.aeriva.core.result.AerivaResult
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -21,6 +22,7 @@ import java.io.File
  * running it in this environment (no Gradle/Android SDK available
  * here) -- verify this test executes as part of the real build.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class DataStoreAerivaPreferencesTest {
 
     private lateinit var file: File

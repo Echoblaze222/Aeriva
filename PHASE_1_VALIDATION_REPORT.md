@@ -482,3 +482,68 @@ module-internal source code). Not claiming this fix is confirmed until
 the next real run.
 
 **Phase 1 status: still BLOCKED.**
+
+## U. Fifth actual CI run result (real, not simulated) -- Build and Static checks both PASSED
+
+After the visibility fix (commit ee4115e), the workflow ran a fifth
+time, with the first genuinely good news:
+
+- **build**: **PASS.** `:app:assembleDebug` and every module compiled
+  successfully.
+- **static-checks**: **PASS.** Android Lint ran clean.
+- **unit-tests**: FAIL -- `:core:security:testDebugUnitTest`, all 5 tests
+  in `EncryptedPreferencesSecureStorageTest` failed with
+  `java.lang.IllegalStateException`.
+- **instrumented-tests-emulator**: status not yet confirmed from what was
+  shared this round -- follow up separately.
+
+### Root cause
+
+`EncryptedPreferencesSecureStorageTest`'s helper constructed
+`StandardTestDispatcher()` with no arguments, which creates its own
+independent `TestCoroutineScheduler` rather than sharing the one
+`runTest` itself manages (`TestScope.testScheduler`).
+`EncryptedPreferencesSecureStorage`'s methods call
+`withContext(dispatchers.io) { ... }`; the moment that switches onto a
+dispatcher backed by a *different* scheduler than the one `runTest` is
+driving, kotlinx-coroutines-test throws `IllegalStateException` --
+exactly what all 5 failures showed, at the exact line each test called
+into `storage`. This is a real, common `kotlinx-coroutines-test` pitfall
+that unit-test execution (not code review) is what actually catches.
+
+### Fix
+
+The test helper now takes the `TestCoroutineScheduler` explicitly and
+constructs `StandardTestDispatcher(scheduler)` with it, and every test
+passes `testScheduler` (the `TestScope` receiver's own scheduler,
+available inside `runTest { }`) through. Same scheduler on both sides
+now.
+
+### Also fixed while here (a warning, not a failure)
+
+`core:preferences`'s `DataStoreAerivaPreferencesTest` used
+`UnconfinedTestDispatcher()` without the required
+`@OptIn(ExperimentalCoroutinesApi::class)`, which compiled but emitted a
+compiler warning on every run. Added the opt-in annotation. Not fixing
+this would not have failed CI, but it was found in the same log and cost
+nothing to fix alongside the real failure.
+
+Deprecation warnings on `AerivaSecureStorageFactory.kt` (`MasterKey`,
+`EncryptedSharedPreferences` "deprecated in Java") were also visible in
+this run's log -- these come from `androidx.security.crypto` itself, not
+from anything in this codebase, and are left as-is; not actioned in this
+pass.
+
+### What this does NOT yet confirm
+
+Same caveat as sections Q/R/S/T. Five distinct real problems found and
+fixed via actual CI runs now. This is the first run where two of the
+four job categories (build, static-checks) are confirmed passing, not
+just "further than last time" -- genuine progress, still not the whole
+gate. `unit-tests` needs the next run to confirm this specific fix, and
+`instrumented-tests-emulator`'s result from this run is still unknown as
+of writing this section.
+
+**Phase 1 status: still BLOCKED** (unit-tests unconfirmed after this fix;
+instrumented-tests-emulator result unknown; physical-device tests never
+attempted, as always).
