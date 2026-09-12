@@ -204,7 +204,21 @@ jobs:
           arch: x86_64
           profile: pixel_5
           disable-animations: true
-          script: ./gradlew connectedDebugAndroidTest --stacktrace
+          # sys.boot_completed can report true before the package service
+          # is actually registered -- this action's own "wait for boot"
+          # step doesn't cover that gap. Confirmed from this repo's own
+          # CI run: APK install failed with "Can't find service: package"
+          # even though the emulator had booted (a TimeoutException
+          # fetching device properties immediately before it in the same
+          # log is the same underlying readiness gap). Polling for the
+          # actual service instead of guessing a fixed sleep duration --
+          # deterministic wait for the real condition, not a fragile
+          # arbitrary delay.
+          script: |
+            echo "Waiting for the package service to be ready..."
+            timeout 180 bash -c 'until adb shell service check package 2>/dev/null | grep -q "package: found"; do sleep 2; done'
+            echo "Package service ready."
+            ./gradlew connectedDebugAndroidTest --stacktrace
 
       - name: Upload instrumented test reports
         if: always()

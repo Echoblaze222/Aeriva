@@ -672,3 +672,56 @@ physical-device tests remain untouched, as always.
 **Phase 1 status: still BLOCKED** (3/4 job categories confirmed PASS;
 instrumented-tests-emulator fix unconfirmed; physical-device tests never
 attempted).
+
+## X. Ninth real problem: package service not ready at install time
+
+Run #11 (after commit 8e2b230's androidx.test:runner fix) confirmed that
+fix worked -- no more `ClassNotFoundException`. `build`, `unit-tests`,
+and `static-checks` all stayed PASS. The emulator itself booted this
+time (no repeat of the earlier "Timeout waiting for emulator to boot").
+A new, later failure appeared instead:
+
+```
+[PropertyFetcher]: TimeoutException getting properties for device emulator-5554
+...
+Task :core:database:connectedDebugAndroidTest FAILED
+Message: Failed to install split APK(s): [.../database-debug-androidTest.apk]
+'package install-create -r -t -S 2817723' returns error
+'Unknown failure: cmd: Can't find service: package'
+```
+
+### Root cause
+
+`sys.boot_completed` (what the emulator-runner action waits on) can
+report true before the Android `package` service is actually registered
+and ready to accept installs -- a known gap in emulator boot-readiness
+checking, not specific to this project's code. The `TimeoutException`
+fetching device properties immediately before the install failure in
+the same log is the same underlying readiness gap manifesting a second
+way.
+
+### Fix
+
+Replaced the direct `./gradlew connectedDebugAndroidTest` script step
+with an explicit poll loop that waits for `adb shell service check
+package` to report `package: found` (capped at 180s) before running
+Gradle. Deliberately not a fixed `sleep N` -- that would be guessing a
+duration rather than waiting for the actual condition, and would either
+waste time on fast boots or still race on slow ones.
+
+Also observed in this run, not actioned: a non-fatal warning --
+`Unable to strip the following libraries, packaging them as they are:
+libdatastore_shared_counter.so` -- a known benign warning from
+DataStore's bundled native library; did not fail the build and isn't
+addressed here.
+
+### What this does NOT yet confirm
+
+Nine distinct real problems now found and fixed via actual CI runs.
+build/unit-tests/static-checks continue to be confirmed PASS across
+multiple runs, not a one-off. instrumented-tests-emulator's fix here is
+unconfirmed until the next real run.
+
+**Phase 1 status: still BLOCKED** (3/4 job categories repeatedly
+confirmed PASS; instrumented-tests-emulator fix unconfirmed; physical-
+device tests never attempted).
