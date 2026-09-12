@@ -547,3 +547,72 @@ of writing this section.
 **Phase 1 status: still BLOCKED** (unit-tests unconfirmed after this fix;
 instrumented-tests-emulator result unknown; physical-device tests never
 attempted, as always).
+
+## V. Continued diagnosis from the same/next run -- two more real, distinct problems
+
+Further log detail from the same round surfaced two more real failures,
+unrelated to each other and to section U's fix:
+
+### 1. `:core:database:kspDebugKotlin` FAILED -- Room schema export
+
+```
+e: [ksp] kotlinx.serialization.json.internal.JsonDecodingException:
+Expected start of the object '{', but had 'EOF' instead at path: $
+JSON input:
+...
+at androidx.room.migration.bundle.SchemaBundle$Deserializer.deserialize
+at androidx.room.compiler.processing.util.Database.exportSchema
+```
+
+**Root cause:** this project's `core:database/build.gradle.kts` configured
+Room's schema export via the older, raw
+`ksp { arg("room.schemaLocation", "$projectDir/schemas") }` mechanism.
+Verified (not assumed) via web research that this exact mechanism has a
+known, documented failure class in recent Room/KSP versions -- e.g.
+DuckDuckGo's own Android repo hit and fixed this same category of bug
+(PR #7712: "Several modules were using annotationProcessorOptions... but
+this only works with kapt, not KSP... schemas weren't being exported" /
+"absolute paths were being used which breaks Gradle caching"), and
+Room's own documentation has promoted the dedicated `androidx.room`
+Gradle plugin with a `room { schemaDirectory(...) }` DSL as the current
+recommended replacement since Room 2.6.0.
+
+**Fix:** added the `androidx.room` Gradle plugin (`libs.plugins.androidx.room`,
+sharing the existing `room = "2.8.4"` version) to the root `build.gradle.kts`
+and `core/database/build.gradle.kts`, replacing the raw `ksp { arg(...) }`
+block with `room { schemaDirectory("$projectDir/schemas") }`. Also removed
+the manual `sourceSets { getByName("androidTest").assets.srcDirs(...) }`
+line -- the Room plugin wires this automatically per its own docs, so the
+manual version was redundant (and possibly a contributing factor to the
+original failure, since a plugin-managed and hand-managed path pointing
+at the same directory could plausibly race).
+
+### 2. `instrumented-tests-emulator` FAILED -- "Timeout waiting for emulator to boot"
+
+Not a code problem. Verified (not assumed) via direct research:
+`macos-latest` has been Apple Silicon (arm64) since macOS 14, confirmed
+both by GitHub's own runner-images documentation and by a maintainer
+comment on `reactivecircus/android-emulator-runner`'s own repo (issue
+#392): *"macos-latest uses macOS 14 now which appears to have an issue
+starting the Android emulator."* This job's `arch: x86_64` setting loses
+hardware acceleration entirely on an Apple Silicon host -- exactly
+"timeout waiting to boot," not a flake. `arm64-v8a` is not a safe
+alternative either -- it has its own separate, actively open failure
+reports on the same action's issue tracker on GitHub's macOS runners.
+
+**Fix:** `runs-on: macos-15-intel` -- confirmed as GitHub's current,
+still-supported Intel-architecture label (through 2027-08). The old
+`macos-13` Intel label (what older guidance for this action assumes) is
+fully deprecated as of 2025-12-04 and would fail outright, not just be
+suboptimal -- checked and avoided. `arch: x86_64` unchanged, now paired
+with a host that can actually accelerate it.
+
+### What this does NOT yet confirm
+
+Same standing caveat. Seven distinct real problems now found and fixed
+via actual CI runs across this whole process (KSP version, kotlinOptions
+removal, core-ktx/compileSdk, internal visibility, coroutine test
+scheduler, Room schema export mechanism, emulator runner architecture).
+None of today's fixes are confirmed until the next real run.
+
+**Phase 1 status: still BLOCKED.**

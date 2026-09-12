@@ -168,7 +168,19 @@ jobs:
     # physical sensor/radio behavior). Per this repo's validation
     # documentation, "instrumented (emulator)" and "physical device" are
     # tracked as separate rows, not treated as the same thing.
-    runs-on: macos-latest
+    # macos-latest is Apple Silicon (arm64) as of macOS 14+ -- confirmed
+    # via GitHub's own runner-images docs. x86_64 emulators lose hardware
+    # acceleration (HAXM) on that host entirely, which is what actually
+    # caused "Timeout waiting for emulator to boot" in this project's own
+    # CI run -- not a flake. arm64-v8a emulators are a documented
+    # separate source of failures on GitHub's macOS runners (multiple
+    # open issues on reactivecircus/android-emulator-runner). macos-13
+    # (the old Intel label) is fully deprecated as of 2025-12-04.
+    # macos-15-intel is GitHub's current, still-supported Intel label
+    # (through 2027-08) -- pinned here so x86_64 + HAXM acceleration
+    # actually works, matching the combination this action's own docs
+    # were written around.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 

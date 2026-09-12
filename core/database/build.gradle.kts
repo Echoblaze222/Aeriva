@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.androidx.room)
 }
 
 android {
@@ -13,18 +14,6 @@ android {
     defaultConfig {
         minSdk = 26
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
-
-    // Schemas exported for migration testing per Room's recommended
-    // practice -- required before any version = 2 change ships, so the
-    // migration path itself is testable rather than trusted by
-    // inspection. Committed under core/database/schemas/.
-    ksp {
-        arg("room.schemaLocation", "$projectDir/schemas")
-    }
-
-    sourceSets {
-        getByName("androidTest").assets.srcDirs("$projectDir/schemas")
     }
 
     compileOptions {
@@ -37,6 +26,25 @@ kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
     }
+}
+
+// Schemas exported for migration testing per Room's recommended practice
+// -- required before any version = 2 change ships, so the migration path
+// itself is testable rather than trusted by inspection. Committed under
+// core/database/schemas/.
+//
+// Uses the official Room Gradle plugin's `room {}` DSL rather than the
+// older raw `ksp { arg("room.schemaLocation", ...) }` mechanism this
+// project used previously -- that approach caused a real CI failure
+// (kspDebugKotlin: JsonDecodingException reading the schema bundle) that
+// this project independently confirmed matches a documented, known-buggy
+// pattern with the raw KSP arg approach in recent Room versions; the
+// Room plugin is the currently-recommended replacement and also wires
+// the schema directory into androidTest's assets automatically, so the
+// manual `sourceSets { getByName("androidTest").assets.srcDirs(...) }`
+// this project used before is no longer needed.
+room {
+    schemaDirectory("$projectDir/schemas")
 }
 
 dependencies {
