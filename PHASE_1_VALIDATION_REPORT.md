@@ -725,3 +725,55 @@ unconfirmed until the next real run.
 **Phase 1 status: still BLOCKED** (3/4 job categories repeatedly
 confirmed PASS; instrumented-tests-emulator fix unconfirmed; physical-
 device tests never attempted).
+
+## Y. Tenth real problem: `timeout` command doesn't exist on macOS
+
+Run #12 (after commit 34a2153) confirmed `build`/`unit-tests`/
+`static-checks` all still PASS across yet another run. The emulator
+step itself failed immediately this time, before even reaching the
+package-service check:
+
+```
+/bin/sh -c 'timeout 180 bash -c ...'
+/bin/sh: timeout: command not found
+Error: The process '/bin/sh' failed with exit code 127
+```
+
+### Root cause
+
+My own mistake in section X's fix, not a pre-existing project issue:
+`timeout` is a GNU coreutils command. This job runs on `macos-15-intel`
+(see the `runs-on` fix in section V.2) -- macOS's stock shell does not
+have `timeout` available by default, unlike Linux. I wrote the fix
+assuming a GNU/Linux environment.
+
+### Fix
+
+Replaced `timeout 180 bash -c '...'` with a manual attempt-counter loop
+(90 attempts x 2s sleep = same 180s cap, no external dependency):
+
+```bash
+attempt=0
+max_attempts=90
+until adb shell service check package 2>/dev/null | grep -q "package: found"; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge "$max_attempts" ]; then
+    echo "Timed out waiting for the package service." >&2
+    exit 1
+  fi
+  sleep 2
+done
+```
+
+Portable across macOS and Linux without installing anything extra.
+
+### What this does NOT yet confirm
+
+Ten distinct real problems now found and fixed via actual CI runs --
+this one specifically was a mistake in a previous fix, caught the same
+way every other problem in this report was: by actually running it, not
+by review. build/unit-tests/static-checks remain confirmed PASS across
+four consecutive runs now. instrumented-tests-emulator's fix here is
+unconfirmed until the next real run.
+
+**Phase 1 status: still BLOCKED.**

@@ -214,9 +214,26 @@ jobs:
           # actual service instead of guessing a fixed sleep duration --
           # deterministic wait for the real condition, not a fragile
           # arbitrary delay.
+          #
+          # NOT using the GNU `timeout` command here -- this job runs on
+          # macos-15-intel (see runs-on above), and `timeout` is a GNU
+          # coreutils command that does not exist on macOS's stock shell
+          # by default. Confirmed from this repo's own CI run:
+          # "/bin/sh: timeout: command not found", exit 127. A manual
+          # attempt-counter loop is portable across macOS and Linux
+          # without installing anything extra.
           script: |
             echo "Waiting for the package service to be ready..."
-            timeout 180 bash -c 'until adb shell service check package 2>/dev/null | grep -q "package: found"; do sleep 2; done'
+            attempt=0
+            max_attempts=90
+            until adb shell service check package 2>/dev/null | grep -q "package: found"; do
+              attempt=$((attempt + 1))
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "Timed out waiting for the package service." >&2
+                exit 1
+              fi
+              sleep 2
+            done
             echo "Package service ready."
             ./gradlew connectedDebugAndroidTest --stacktrace
 
