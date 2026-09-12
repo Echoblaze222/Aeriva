@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
  * blocking I/O, so every call runs on [AerivaDispatchers.io] -- this is
  * core:common's first real consumer, not a speculative dependency.
  */
-class EncryptedPreferencesSecureStorage(
+internal class EncryptedPreferencesSecureStorage(
     private val store: SecureKeyValueStore,
     private val dispatchers: AerivaDispatchers,
     private val logger: AerivaLogger

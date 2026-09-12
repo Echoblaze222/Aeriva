@@ -1,6 +1,6 @@
 package com.aeriva.core.security
 
-class FakeSecureKeyValueStore : SecureKeyValueStore {
+internal class FakeSecureKeyValueStore : SecureKeyValueStore {
 
     private val values = mutableMapOf<String, String>()
     var failNextWith: Throwable? = null

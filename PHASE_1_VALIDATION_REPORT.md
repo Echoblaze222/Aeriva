@@ -429,3 +429,56 @@ kotlinOptions DSL removal, core-ktx/compileSdk mismatch), each closer to
 a working build than the last. This is what CI existing was for.
 
 **Phase 1 status: still BLOCKED.**
+
+## T. Fourth actual CI run result (real, not simulated) -- reached the source-code level
+
+After the core-ktx fix (commit fdc719c), the workflow ran a fourth time.
+Real progress again: `:app:assembleDebug` succeeded completely, and
+`:core:logging` and `:core:preferences` both built and assembled in
+full. This is the first run to get past dependency resolution/AAR
+metadata entirely and fail on an actual Kotlin visibility rule inside
+this project's own source:
+
+```
+e: .../core/security/src/main/kotlin/com/aeriva/core/security/
+   EncryptedPreferencesSecureStorage.kt:15:5 'public' function exposes
+   its 'internal' parameter type 'SecureKeyValueStore'.
+> Task :core:security:compileDebugKotlin FAILED
+```
+
+### Root cause
+
+`SecureKeyValueStore` was deliberately declared `internal` (an
+implementation-detail seam, not part of `core:security`'s public API --
+see its own doc comment). `EncryptedPreferencesSecureStorage`, which
+takes it as a constructor parameter, was left at default (public)
+visibility -- a real inconsistency between the two. Kotlin's compiler
+correctly rejects a public class exposing a less-visible type in its
+constructor signature. The same mismatch also existed in
+`SharedPreferencesKeyValueStore` (public class implementing the internal
+interface as a supertype) and the test-only `FakeSecureKeyValueStore` --
+found by grepping for every reference to `SecureKeyValueStore` before
+fixing, not discovered one CI run at a time.
+
+### Fix
+
+All three made `internal`, matching the type they depend on/implement:
+`EncryptedPreferencesSecureStorage`, `SharedPreferencesKeyValueStore`,
+`FakeSecureKeyValueStore`. `AerivaSecureStorageFactory.create()` (the
+only actual public entry point into this module) was checked and
+already declared its return type as the public `AerivaSecureStorage`
+interface, not any of the now-internal concrete classes -- no change
+needed there. This is a real design correction, not just a build fix:
+`core:security`'s public surface is now exactly `AerivaSecureStorage` +
+`AerivaSecureStorageFactory`, nothing else, which was the original
+intent.
+
+### What this does NOT yet confirm
+
+Same caveat as sections Q/R/S. Four distinct real problems found and
+fixed via actual CI runs now; each run has gotten further than the last
+(dependency resolution -> DSL removal -> AAR metadata -> now
+module-internal source code). Not claiming this fix is confirmed until
+the next real run.
+
+**Phase 1 status: still BLOCKED.**

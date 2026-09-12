@@ -3,7 +3,7 @@ package com.aeriva.core.security
 import android.content.SharedPreferences
 import androidx.core.content.edit
 
-class SharedPreferencesKeyValueStore(
+internal class SharedPreferencesKeyValueStore(
     private val preferences: SharedPreferences
 ) : SecureKeyValueStore {
 
