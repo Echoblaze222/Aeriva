@@ -14,7 +14,13 @@ androidxTestJunit = "1.3.0"
 room = "2.8.4"
 datastore = "1.2.1"
 securityCrypto = "1.1.0"
-coreKtx = "1.19.0"
+# 1.18.0, not the newer 1.19.0: 1.19.0's AAR metadata requires compileSdk
+# 37 and AGP 9.1.0+ (confirmed by the actual CI failure this caused --
+# CheckAarMetadata explicitly named this requirement -- and independently
+# by androidx's own release notes). This project is pinned to compileSdk
+# 36 / AGP 8.13.2 (see the AGP version comment above), so 1.18.0 is the
+# newest compatible release, not a downgrade taken for its own sake.
+coreKtx = "1.18.0"
 # KSP versioning note: as of KSP 2.3.0, KSP versions are plain semantic
 # versions independent of any specific Kotlin compiler version --
 # "{kotlin-version}-{ksp-patch}" (the format used through KSP 2.2.x) no

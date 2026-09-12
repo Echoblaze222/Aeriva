@@ -378,3 +378,54 @@ note, not folded into a claim that the build now works.
 
 **Phase 1 status: still BLOCKED.**
 
+## S. Third actual CI run result (real, not simulated) -- and first sign of real progress
+
+After the compilerOptions fix (commit 9050fa5), the workflow ran a third
+time. This run got substantially further than either previous one --
+dozens of real tasks executed and succeeded across every module
+(`compileDebugKotlin`, `assembleDebug` for `:app`, KSP processing for
+`:core:database`, etc., all visible in the real log), before failing at
+a new, later stage: `:core:security:checkDebugAarMetadata`.
+
+```
+FAILURE: Build failed with an exception.
+* What went wrong:
+Execution failed for task ':core:security:checkDebugAarMetadata'.
+> A failure occurred while executing CheckAarMetadataWorkAction
+  > 4 issues were found when checking AAR metadata:
+    1. Dependency 'androidx.core:core:1.19.0' requires ... compile
+       against version 37 or later of the Android APIs.
+       :core:security is currently compiled against android-36.
+       Also, the maximum recommended compile SDK version for Android
+       Gradle plugin 8.13.2 is 36.
+    2. Dependency 'androidx.core:core:1.19.0' requires Android Gradle
+       plugin 9.1.0 or higher. This build currently uses AGP 8.13.2.
+    3/4. Same two issues for 'androidx.core:core-ktx:1.19.0'.
+```
+
+### Root cause
+
+`core:security`'s direct dependency on `androidx.core:core-ktx` was
+pinned to `1.19.0` when the module was written. `1.19.0`'s own AAR
+metadata requires `compileSdk 37` and `AGP 9.1.0+` -- both newer than
+this project's pinned `compileSdk 36` / AGP `8.13.2`. This was not
+caught earlier because, same as every other version in this catalog,
+nothing had actually built until CI existed.
+
+### Fix
+
+`coreKtx` set to `1.18.0` in `gradle/libs.versions.toml` -- confirmed (not
+guessed) as the newest release still compatible with `compileSdk 36`/AGP
+8.x, via androidx's own release notes (1.18.0's changelog: "compileSdk
+changed from API 36 to API 36.1") and independent corroboration from
+other projects that hit this identical AAR-metadata wall going from
+1.18.0 to 1.19.0. One version value changed; nothing else.
+
+### What this does NOT yet confirm
+
+Same caveat as sections Q and R -- unconfirmed until the next real run.
+Three distinct real problems have now been found this way (KSP version,
+kotlinOptions DSL removal, core-ktx/compileSdk mismatch), each closer to
+a working build than the last. This is what CI existing was for.
+
+**Phase 1 status: still BLOCKED.**
