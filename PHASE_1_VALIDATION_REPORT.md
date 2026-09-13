@@ -886,3 +886,57 @@ repeatedly confirmed PASS; core:database's instrumented tests confirmed
 PASS on emulator for the first time; core:security's and
 network:monitor's instrumented tests still unconfirmed; physical-device
 tests never attempted).
+
+## AB. Thirteenth real problem: package service can drop again mid-run
+
+Run #15 (after commit 9cf96ba's AndroidLogcatLogger fix) got further
+again: `core:database`'s instrumented tests passed a second time,
+confirming that wasn't a fluke. A new failure appeared in a different
+module, later in the same run:
+
+```
+> Task :core:security:connectedDebugAndroidTest FAILED
+Message: Failed to install split APK(s): [.../security-debug-androidTest.apk]
+'package install-create -r -t -S 3773767' returns error
+'Unknown failure: cmd: Can't find service: package'
+```
+
+The exact same error as section X -- but this time it happened
+**after** the package-service check at the start of the script had
+already confirmed the service was ready, and after `core:database`'s
+tests had already run successfully earlier in the same invocation. A
+line just before this failure in the log --
+`ERROR | adb protocol fault (couldn't read status length)` -- points to
+a transient ADB connection hiccup, not a code defect in this project.
+
+### Root cause
+
+A single readiness check at the start of the script only guards the
+first install. It cannot protect against the package service (or the
+ADB connection to it) dropping again partway through a long
+multi-module instrumented-test run -- which is exactly what happened
+here, on real, observed evidence, not a hypothetical.
+
+### Fix
+
+`.github/scripts/wait-for-package-service.sh` now retries the entire
+`./gradlew connectedDebugAndroidTest` run up to 3 times if it fails,
+re-checking the package service is ready before each retry. Every
+attempt's real output is preserved in the log (nothing is hidden), and
+it only gives up for good after the third failure -- this is retrying a
+confirmed, evidenced infra flake, not silently ignoring a real failure.
+`set -euo pipefail` changed to `set -uo pipefail`: the script now needs
+to capture `./gradlew`'s exit status itself to decide whether to retry,
+which `-e` would have prevented by exiting immediately on any non-zero
+status.
+
+### What this does NOT yet confirm
+
+Thirteen distinct real problems now found and fixed. `core:database`'s
+instrumented tests have now passed twice across two different runs --
+that's a real, repeated confirmation, not a one-off.
+`core:security`'s and `network:monitor`'s instrumented tests remain
+unconfirmed passing. This retry fix itself is unconfirmed until the
+next real run.
+
+**Phase 1 status: still BLOCKED.**
