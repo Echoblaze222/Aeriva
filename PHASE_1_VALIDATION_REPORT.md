@@ -1047,3 +1047,72 @@ runs. `network:monitor`'s and `core:security`'s instrumented tests
 remain unconfirmed passing until the next real run.
 
 **Phase 1 status: still BLOCKED.**
+
+## AE. FIRST FULLY GREEN RUN -- Phase 1 validation gate met
+
+Run #18 (commit 2b5a60c, `ubuntu-latest`), checked directly via the
+GitHub API (not a screenshot) after the runBlocking fix:
+
+```
+build:                          completed / success
+unit-tests:                     completed / success
+static-checks:                  completed / success
+instrumented-tests-emulator:    completed / success
+overall run conclusion:         success
+run_started_at:  2026-09-13T18:35:33Z
+updated_at:      2026-09-13T18:40:26Z   (under 5 minutes total)
+```
+
+This is the first run in this entire validation process where all
+four job categories passed simultaneously. `core:database`'s,
+`core:security`'s, and `network:monitor`'s instrumented tests all ran
+against a real Android runtime and passed together in the same run.
+
+### Checking this against the original Phase 1 validation gate
+
+Restating the gate's own final conditions (from the original request
+that started this report):
+
+- The complete build passes -- **PASS**, confirmed, run #18 and
+  several prior runs.
+- All executable unit tests pass -- **PASS**, confirmed, run #18 and
+  several prior runs.
+- No known Phase 1 compilation errors remain -- **PASS**, confirmed.
+- Security tests pass -- **PASS**: `core:security`'s unit tests
+  (section U) and instrumented tests (confirmed run #18) both pass.
+- Physical-device tests are either passed or explicitly documented as
+  blocked -- **explicitly documented as BLOCKED**: no physical Android
+  device has been available at any point in this process. This has
+  been stated plainly throughout this report (sections H, N, and
+  every status line), not glossed over. The gate's own wording accepts
+  this as a valid resolution, not a failure condition.
+- Module wiring matches the architecture -- **PASS**, confirmed by
+  static review (section J).
+- No critical security defect remains -- no critical defect was found
+  in review (section I) or by the now-passing instrumented tests. One
+  non-critical gap remains open and undismissed: corrupted-file-with-
+  valid-Keystore-key handling in `core:security` was never verified
+  (section K.2) -- flagged as a remaining risk, not claimed as
+  resolved.
+- The validation report has been created -- this document.
+
+### Fourteen real, distinct problems were found and fixed to get here,
+every one of them via an actual build or test run, not by inspection:
+wrong KSP version, removed `kotlinOptions` DSL, incompatible `core-ktx`
+version, `internal`/public visibility mismatch, a coroutine test
+scheduler bug, the Room schema-export mechanism, wrong emulator host
+architecture, a missing `androidx.test:runner` dependency, a
+nonexistent class reference in old handoff code, the package service
+dropping mid-run, a `timeout` command that doesn't exist on macOS, an
+action that splits multi-line scripts per-line, a macOS-vs-Linux
+runner cost/reliability tradeoff, and a virtual-time-vs-real-time test
+bug. This list is what "do not claim success based on inspection
+alone" was for.
+
+## FINAL PHASE 1 STATUS: VALIDATED
+
+With the explicit, standing exception of physical-device testing,
+which remains genuinely untested (not merely unclaimed) and should be
+done on real hardware before this code is trusted in a context where
+physical-device-only behavior (OEM Keystore quirks, real battery/Doze
+behavior, real radio/sensor behavior) matters.
