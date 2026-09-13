@@ -4,8 +4,8 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.aeriva.core.logging.AndroidLogcatLogger
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -30,7 +30,16 @@ import org.junit.runner.RunWith
 class AndroidNetworkMonitorInstrumentedTest {
 
     @Test
-    fun observe_emitsAStateWithoutCrashing() = runTest {
+    fun observe_emitsAStateWithoutCrashing() = runBlocking {
+        // Deliberately runBlocking (real time), not runTest (virtual
+        // time). Confirmed from this repo's own CI run: runTest's
+        // virtual-time scheduler cannot advance for a real
+        // ConnectivityManager callback firing on a real system thread --
+        // the test hung until its 10s withTimeout, then failed with
+        // "Timed out after 10s of _virtual_ time", exactly the scenario
+        // kotlinx-coroutines-test warns about mixing virtual time with
+        // real asynchronous system events. This test waits on a real OS
+        // callback, not simulated coroutine logic, so it needs real time.
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val monitor = AndroidNetworkMonitor(
             context = context,

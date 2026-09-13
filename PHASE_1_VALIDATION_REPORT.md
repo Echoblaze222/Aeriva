@@ -983,3 +983,67 @@ speed documented above), not yet confirmed by an actual run under the
 new configuration.
 
 **Phase 1 status: still BLOCKED.**
+
+## AD. Real signal confirmed: ubuntu-latest is faster and the retry logic works correctly
+
+Run #17 (first run on `ubuntu-latest`) gives two pieces of genuinely
+good evidence, plus one real bug -- not infra flakiness this time.
+
+### Confirmed: platform switch is working as intended
+
+- `core:database`'s instrumented tests passed again (third confirmed
+  pass).
+- The retry logic (section AB) worked exactly as designed: attempt 1
+  failed, the script re-checked the package service
+  ("Package service ready again. Retrying."), and it proceeded to
+  attempt 2, then attempt 3 -- visible directly in the log.
+- Total job time stayed in the ~5 minute range across attempts, not
+  14-20+ minutes -- the ubuntu-latest speed improvement holds.
+- A recurring `[EmulatorConsole]: Failed to start Emulator console for
+  5554` message appeared several times but did not block test
+  execution each time it appeared (tests ran immediately after it) --
+  logged here as an observed, non-blocking oddity, not something fixed,
+  since there's no evidence it caused a failure.
+
+### The real failure: same bug, all 3 attempts (correctly NOT a retry-fixable flake)
+
+```
+AndroidNetworkMonitorInstrumentedTest > observe_emitsAStateWithoutCrashing FAILED
+kotlinx.coroutines.TimeoutCancellationException: Timed out after 10s of
+_virtual_ (kotlinx.coroutines.test) time. To use the real time, wrap
+'withTimeout' in 'withContext(Dispatchers.Default.limitedParallelism(1))'
+```
+
+This is the correct behavior of the retry logic, not a failure of it:
+retrying helps with transient infra issues; this was a genuine,
+deterministic test-code bug, so it correctly failed the same way on
+attempt 3 as attempt 1, and the script correctly gave up rather than
+retry forever.
+
+### Root cause
+
+`AndroidNetworkMonitorInstrumentedTest` used `runTest` (kotlinx-
+coroutines-test's *virtual*-time test builder) while waiting on a real
+`android.net.ConnectivityManager` callback. Virtual time cannot advance
+for a callback that fires on a real system thread outside the test
+scheduler's control -- this is a known, documented limitation of
+`runTest`, and the exception message itself states kotlinx-coroutines-
+test's own suggested workaround.
+
+### Fix
+
+Replaced `runTest { ... }` with `runBlocking { ... }` (real time).
+This is not a workaround -- it is the correct builder for this test's
+actual nature: an instrumented test verifying a real OS integration
+should run in real time, not simulated/virtual coroutine time.
+`kotlinx.coroutines.test.runTest` import removed; `kotlinx.coroutines.
+runBlocking` added.
+
+### What this does NOT yet confirm
+
+Fourteen distinct real problems now found and fixed. `core:database`'s
+instrumented tests have passed three times now across three different
+runs. `network:monitor`'s and `core:security`'s instrumented tests
+remain unconfirmed passing until the next real run.
+
+**Phase 1 status: still BLOCKED.**
