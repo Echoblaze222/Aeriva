@@ -158,29 +158,29 @@ jobs:
   instrumented-tests-emulator:
     name: Instrumented tests (Android EMULATOR -- not a physical device)
     needs: build
-    # macOS runners are used here because they are the GitHub-hosted option
-    # with reliable hardware-accelerated emulation for
-    # reactivecircus/android-emulator-runner. This job proves the Room DAO
-    # and Keystore-backed storage code paths run correctly against a real
-    # Android runtime and a real (virtual) Keystore -- it does NOT prove
-    # behavior that only shows up on real hardware (OEM-specific Keystore
-    # implementations, real battery/Doze/background-restriction behavior,
-    # physical sensor/radio behavior). Per this repo's validation
-    # documentation, "instrumented (emulator)" and "physical device" are
-    # tracked as separate rows, not treated as the same thing.
-    # macos-latest is Apple Silicon (arm64) as of macOS 14+ -- confirmed
-    # via GitHub's own runner-images docs. x86_64 emulators lose hardware
-    # acceleration (HAXM) on that host entirely, which is what actually
-    # caused "Timeout waiting for emulator to boot" in this project's own
-    # CI run -- not a flake. arm64-v8a emulators are a documented
-    # separate source of failures on GitHub's macOS runners (multiple
-    # open issues on reactivecircus/android-emulator-runner). macos-13
-    # (the old Intel label) is fully deprecated as of 2025-12-04.
-    # macos-15-intel is GitHub's current, still-supported Intel label
-    # (through 2027-08) -- pinned here so x86_64 + HAXM acceleration
-    # actually works, matching the combination this action's own docs
-    # were written around.
-    runs-on: macos-15-intel
+    # This job proves the Room DAO and Keystore-backed storage code paths
+    # run correctly against a real Android runtime and a real (virtual)
+    # Keystore -- it does NOT prove behavior that only shows up on real
+    # hardware (OEM-specific Keystore implementations, real battery/Doze/
+    # background-restriction behavior, physical sensor/radio behavior).
+    # Per this repo's validation documentation, "instrumented (emulator)"
+    # and "physical device" are tracked as separate rows, not treated as
+    # the same thing.
+    #
+    # Switched from macos-15-intel to ubuntu-latest + explicit KVM
+    # access. Two reasons, not just one:
+    # 1) This repo is private -- macOS runners bill at 10x the rate of
+    #    Linux runners on GitHub Actions for private repos. ubuntu-latest
+    #    is both cheaper and, per multiple sources, 2-3x faster for this
+    #    exact workload (hardware-accelerated Android emulation).
+    # 2) Every emulator-specific failure chased in this repo's own CI
+    #    history (macos-latest's Apple Silicon x86_64-acceleration loss,
+    #    "adb protocol fault", the package service dropping mid-run) has
+    #    been on a macOS runner. Linux KVM is the most-used, best-tested
+    #    path for reactivecircus/android-emulator-runner -- switching
+    #    entirely off macOS removes that whole class of host as a
+    #    variable, not just one symptom of it.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -196,6 +196,18 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # ubuntu-latest runners do not grant KVM access by default --
+      # hardware-accelerated emulation needs this udev rule, or the
+      # emulator silently falls back to slow software rendering (or
+      # fails outright). This step is the one macOS did not need
+      # (macOS's own hypervisor didn't require an equivalent grant),
+      # not an oversight carried over from the macOS config.
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - name: Run instrumented tests on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -204,21 +216,13 @@ jobs:
           arch: x86_64
           profile: pixel_5
           disable-animations: true
-          # sys.boot_completed can report true before the package service
-          # is actually registered -- this action's own "wait for boot"
-          # step doesn't cover that gap. Confirmed from this repo's own
-          # CI run: APK install failed with "Can't find service: package"
-          # even though the emulator had booted.
-          #
-          # The wait/retry logic lives in a real script file
-          # (.github/scripts/wait-for-package-service.sh), not inline
-          # here. Confirmed from this repo's own CI run: this action
-          # executes each line of a multi-line `script:` block as its
-          # own separate `/bin/sh -c` call, not as one continuous
-          # script -- a multi-line `until ... do ... done` loop written
-          # directly in this field breaks ("unexpected end of file")
-          # because `do`/`done` end up running as unrelated commands.
-          # Calling a script file as a single line sidesteps that.
+          # The package-service wait/retry logic (see
+          # .github/scripts/wait-for-package-service.sh) is kept
+          # regardless of host platform -- the specific failures it
+          # guards against (sys.boot_completed lying, the package
+          # service dropping mid-run) were observed on macOS but aren't
+          # proven to be macOS-exclusive, and the guard is harmless
+          # (near-instant) if the condition never occurs on Linux.
           script: bash .github/scripts/wait-for-package-service.sh
 
       - name: Upload instrumented test reports

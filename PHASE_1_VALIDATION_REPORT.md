@@ -940,3 +940,46 @@ unconfirmed passing. This retry fix itself is unconfirmed until the
 next real run.
 
 **Phase 1 status: still BLOCKED.**
+
+## AC. Fourteenth change: switched emulator host from macOS to ubuntu-latest + KVM
+
+Run #16 (retry logic from commit 73b70b1) was cancelled after 4+ hours
+without completing -- the retry loop itself did not fail outright, but
+combined with macOS's slower/costlier emulation this made the job
+impractically slow. Rather than keep tuning around macOS-specific
+emulator behavior, switched host platform entirely.
+
+### Reasoning
+
+This repository is **private**. On GitHub Actions, private-repo macOS
+runners bill at 10x the rate of Linux runners, and Linux + KVM is
+reported 2-3x faster for hardware-accelerated Android emulation
+specifically. Beyond cost: every emulator-specific failure chased in
+this report's history (sections V.2's Apple Silicon
+acceleration-loss, X/AB's package-service/ADB flakiness) happened on a
+macOS runner. Switching to `ubuntu-latest` removes that whole class of
+host as a variable, rather than continuing to patch around individual
+symptoms of it.
+
+### Change
+
+- `runs-on: ubuntu-latest` (was `macos-15-intel`)
+- Added an explicit KVM-permission step (`ubuntu-latest` does not grant
+  `/dev/kvm` access by default the way macOS's own hypervisor did not
+  need an equivalent grant) -- without it, the emulator would fall back
+  to unaccelerated software rendering or fail to start.
+- Kept `.github/scripts/wait-for-package-service.sh` (the wait/retry
+  logic) as-is -- the conditions it guards against were observed on
+  macOS but are not proven macOS-exclusive, and the check is
+  near-instant if the condition doesn't occur.
+- `build`, `unit-tests`, `static-checks` jobs are untouched (still
+  `ubuntu-latest`, already working).
+
+### What this does NOT yet confirm
+
+Same standing caveat as every fix in this report -- this is a platform
+change made on real evidence (repeated macOS-specific failures, cost/
+speed documented above), not yet confirmed by an actual run under the
+new configuration.
+
+**Phase 1 status: still BLOCKED.**
