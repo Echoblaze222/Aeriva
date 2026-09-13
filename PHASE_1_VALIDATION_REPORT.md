@@ -824,3 +824,65 @@ consecutive runs now. instrumented-tests-emulator's fix here is
 unconfirmed until the next real run.
 
 **Phase 1 status: still BLOCKED.**
+
+## AA. Real milestone: instrumented tests actually ran and passed on the emulator
+
+Run #14 (after commit c28477b's script-file fix) confirmed the
+package-service wait logic worked: log shows `Package service ready.`
+followed by real test execution:
+
+```
+> Task :core:database:connectedDebugAndroidTest
+Starting 3 tests on test(AVD) - 11
+test(AVD) - 11 Tests 2/3 completed. (0 skipped) (0 failed)
+test(AVD) - 11 Tests 3/3 completed. (0 skipped) (0 failed)
+Finished 3 tests on test(AVD) - 11
+```
+
+`core:database`'s instrumented tests -- the Room DAO tests written back
+when `core:database` was first built -- ran against a real Android
+runtime and **passed**. This is the first actual device-level (emulator)
+test execution and pass in this entire validation process.
+
+### New failure, further along: pre-existing test file, never compiled until now
+
+```
+Task :network:monitor:compileDebugAndroidTestKotlin FAILED
+e: .../AndroidNetworkMonitorInstrumentedTest.kt:5:32 Unresolved reference 'AndroidAerivaLogger'
+e: .../AndroidNetworkMonitorInstrumentedTest.kt:37:22 Unresolved reference 'AndroidAerivaLogger'
+```
+
+**Root cause:** `network:monitor`'s instrumented test (part of the
+original pre-existing handoff code, from before this validation project
+started, and never compiled until a run got this far) referenced
+`com.aeriva.core.logging.AndroidAerivaLogger` -- a class that does not
+exist. The real, actual logger implementation built in `core:logging`
+is named `AndroidLogcatLogger`, and takes a required `debugBuild:
+Boolean` constructor parameter that the old code didn't pass either.
+This is a genuine naming/API mismatch between old handoff code and what
+was actually later built, not something introduced by this validation
+process -- surfaced only now because this is the first run to reach
+compiling `network:monitor`'s androidTest sources at all.
+
+### Fix
+
+Updated the import and constructor call to the real class:
+`AndroidLogcatLogger(debugBuild = true)`. Confirmed `core:logging` is
+already a dependency of `network:monitor` (`implementation(project(":core:logging"))`,
+already visible to androidTest by default) -- no dependency change
+needed, only the reference itself.
+
+### What this does NOT yet confirm
+
+Twelve distinct real problems now found and fixed via actual CI/device
+runs. This is qualitatively different from every fix before it in this
+report: `core:database`'s instrumented tests didn't just compile, they
+executed against a real Android runtime and passed. `network:monitor`'s
+instrumented test has still never successfully compiled or run --
+unconfirmed until the next real run.
+
+**Phase 1 status: still BLOCKED** (build/unit-tests/static-checks
+repeatedly confirmed PASS; core:database's instrumented tests confirmed
+PASS on emulator for the first time; core:security's and
+network:monitor's instrumented tests still unconfirmed; physical-device
+tests never attempted).

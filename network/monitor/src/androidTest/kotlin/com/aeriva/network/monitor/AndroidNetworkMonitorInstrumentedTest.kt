@@ -2,7 +2,7 @@ package com.aeriva.network.monitor
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.aeriva.core.logging.AndroidAerivaLogger
+import com.aeriva.core.logging.AndroidLogcatLogger
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.runTest
@@ -34,7 +34,7 @@ class AndroidNetworkMonitorInstrumentedTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val monitor = AndroidNetworkMonitor(
             context = context,
-            logger = AndroidAerivaLogger()
+            logger = AndroidLogcatLogger(debugBuild = true)
         )
 
         val firstState = withTimeout(10_000) {
