@@ -41,27 +41,46 @@ class AerivaSecureStorageCorruptionInstrumentedTest {
 
     /**
      * Context.getSharedPreferences(name, mode) caches the returned
-     * SharedPreferencesImpl per process, keyed by file name -- this is
-     * internal to ContextImpl and not part of the public API contract.
-     * Without evicting that cache, a second create() call in the same
-     * process (as this test does, to simulate "reopen after disk
-     * corruption") hands back the same in-memory instance from before
-     * the corruption, which still holds the pre-corruption value and
-     * never re-reads the now-corrupted file from disk. That silently
-     * defeats the entire point of this test: it would pass a stale,
-     * cached read off as proof the corruption path works.
+     * SharedPreferencesImpl per process -- this is internal to
+     * ContextImpl and not part of the public API contract. Without
+     * evicting that cache, a second create() call in the same process
+     * (as this test does, to simulate "reopen after disk corruption")
+     * hands back the same in-memory instance from before the
+     * corruption, which still holds the pre-corruption value and never
+     * re-reads the now-corrupted file from disk. That silently defeats
+     * the entire point of this test: it would pass a stale, cached read
+     * off as proof the corruption path works.
+     *
+     * The cache's actual shape, per ContextImpl.java (confirmed against
+     * AOSP source, since this is undocumented private implementation
+     * detail rather than something the public API contract specifies):
+     *
+     *   private static ArrayMap<String, ArrayMap<File, SharedPreferencesImpl>> sSharedPrefsCache;
+     *
+     * The outer map is keyed by package name, but -- critically -- the
+     * INNER map is keyed by the prefs File object, not by the file name
+     * String. An earlier version of this helper removed by the file
+     * name String, which compiled and ran without error but silently
+     * matched nothing (Map.remove with the wrong key type just returns
+     * null), so the stale instance was never actually evicted.
+     * Reconstructing the exact File key ContextImpl itself derives
+     * would be its own source of fragility, so instead this nulls out
+     * the entire static cache: ContextImpl lazily recreates it as an
+     * empty map on the next getSharedPreferences() call, which is safe
+     * and sidesteps the key-type problem entirely. In a single-threaded
+     * instrumented test there is no other in-flight prefs access this
+     * could disrupt.
      *
      * Reflection is unfortunately the only lever available here: there
-     * is no public API to evict a single SharedPreferences instance
-     * from that cache.
+     * is no public API to evict SharedPreferences from that cache.
      */
-    private fun evictCachedSharedPreferences(context: android.content.Context, name: String) {
+    private fun evictAllCachedSharedPreferences() {
         val contextImplClass = Class.forName("android.app.ContextImpl")
         val cacheField = contextImplClass.getDeclaredField("sSharedPrefsCache")
         cacheField.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val cache = cacheField.get(null) as? MutableMap<String, MutableMap<String, android.content.SharedPreferences>>
-        cache?.get(context.packageName)?.remove(name)
+        synchronized(contextImplClass) {
+            cacheField.set(null, null)
+        }
     }
 
     @Test
@@ -110,7 +129,7 @@ class AerivaSecureStorageCorruptionInstrumentedTest {
         // next create() below actually re-reads the (now corrupted)
         // file from disk instead of returning the still-valid,
         // still-cached in-memory instance from before the corruption.
-        evictCachedSharedPreferences(context, AerivaSecureStorageFactory.FILE_NAME)
+        evictAllCachedSharedPreferences()
 
         // Reopen fresh from disk with the SAME, still-valid Keystore
         // key -- this is the "valid key, corrupted ciphertext" scenario.
