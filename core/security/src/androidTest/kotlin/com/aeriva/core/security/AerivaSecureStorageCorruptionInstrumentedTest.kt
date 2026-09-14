@@ -11,6 +11,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 /**
  * K.2: reproduces "corrupted encrypted file while the correct Keystore
@@ -53,7 +54,15 @@ class AerivaSecureStorageCorruptionInstrumentedTest {
         // them without needing to decrypt anything first -- corrupting
         // one of those would test key/keyset loss, the scenario
         // AerivaSecureStorageFactory already handles, not this one.
-        val prefsFile = context.getSharedPreferencesPath(AerivaSecureStorageFactory.FILE_NAME)
+        // Locate the real on-disk preferences file. Context has no
+        // public getter for this path (confirmed against Android's own
+        // Context reference -- an earlier version of this test called a
+        // getSharedPreferencesPath() that does not exist and failed to
+        // compile). The standard, well-established construction is
+        // filesDir's parent (the app's private data directory) plus
+        // shared_prefs/<name>.xml, which is where getSharedPreferences()
+        // itself is documented to create the file.
+        val prefsFile = File(context.filesDir.parentFile, "shared_prefs/${AerivaSecureStorageFactory.FILE_NAME}.xml")
         val original = prefsFile.readText()
         val keysetNames = setOf(
             "__androidx_security_crypto_encrypted_prefs_key_keyset__",

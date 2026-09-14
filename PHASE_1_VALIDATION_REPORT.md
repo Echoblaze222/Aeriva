@@ -1245,3 +1245,41 @@ four files above changed -- nothing else touched.
 
 ## K.2 STATUS: RESOLVED (code + tests complete; CI confirmation pending
 Actions-minutes reset or budget change -- see above)
+
+## AG. My own mistake, caught by CI, in the K.2 instrumented test
+
+Run #19 (commit 0f79d13) failed compiling my own new instrumented test:
+
+```
+core:security:compileDebugAndroidTestKotlin FAILED
+e: AerivaSecureStorageCorruptionInstrumentedTest.kt:30:33
+Unresolved reference 'getSharedPreferencesPath'.
+```
+
+`Context.getSharedPreferencesPath(String)` does not exist -- confirmed
+directly against Android's own `Context` class reference documentation,
+which lists `getSharedPreferences`, `deleteSharedPreferences`, and
+`moveSharedPreferencesFrom`, and no such path-returning method. I
+misremembered this API when writing the test and could not compile-check
+it myself beforehand (same standing environment limitation as
+everything else in this report).
+
+**Fix:** replaced with the standard, well-established manual
+construction -- `File(context.filesDir.parentFile, "shared_prefs/<name>.xml")`
+-- which is where `getSharedPreferences()` is documented to create the
+file, and is the normal way this path is obtained absent a direct
+getter. Rest of the file was re-reviewed line-by-line against Android's
+and Kotlin's real APIs (`deleteSharedPreferences` -- confirmed real,
+API 24+; `File.readText()`/`writeText()` -- real Kotlin stdlib;
+`Regex`/`MatchResult.groups`/`groupValues` -- real Kotlin stdlib; the
+`AerivaSecureStorageFactory.create()` call signature -- matches the
+already-proven-working `AerivaSecureStorageInstrumentedTest` exactly)
+before pushing again, specifically to avoid repeating this same class
+of mistake a second time.
+
+`build`, `unit-tests`, and `static-checks` all passed again in this
+run -- consistent, not affected by this instrumented-test-only compile
+error.
+
+**K.2 status: code and tests pushed; still pending a real CI
+confirmation, same as section AF states.**
