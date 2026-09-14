@@ -73,18 +73,6 @@ class EncryptedPreferencesSecureStorageTest {
     }
 
     @Test
-    fun clear_removesEverything() = runTest {
-        val (storage, _) = storage(testScheduler)
-        storage.set("token", "secret-value")
-        storage.set("relay_session", "another-value")
-
-        storage.clear()
-
-        assertEquals(AerivaResult.Success(null), storage.get("token"))
-        assertEquals(AerivaResult.Success(null), storage.get("relay_session"))
-    }
-
-    @Test
     fun get_whenStoreThrows_returnsUnknownFailure() = runTest {
         val store = FakeSecureKeyValueStore()
         val (storage, _) = storage(testScheduler, store)
@@ -94,5 +82,58 @@ class EncryptedPreferencesSecureStorageTest {
 
         assertTrue(result is AerivaResult.Failure)
         assertTrue((result as AerivaResult.Failure).error is AerivaError.Unknown)
+    }
+
+    @Test
+    fun get_whenStoreThrowsGeneralSecurityException_returnsDataCorruptedNotUnknown() = runTest {
+        // K.2: corrupted encrypted ciphertext with a still-valid
+        // Keystore key surfaces from the real crypto layer as a
+        // GeneralSecurityException (or an unchecked wrapper around one)
+        // -- see EncryptedPreferencesSecureStorage's own doc comment
+        // for why. This must be distinguishable from an ordinary
+        // Unknown failure so a caller can show a real corruption/
+        // recovery state instead of treating it identically to any
+        // other error.
+        val store = FakeSecureKeyValueStore()
+        val (storage, _) = storage(testScheduler, store)
+        store.failNextWith = java.security.GeneralSecurityException("simulated corrupted ciphertext")
+
+        val result = storage.get("token")
+
+        assertTrue(result is AerivaResult.Failure)
+        assertTrue((result as AerivaResult.Failure).error is AerivaError.DataCorrupted)
+    }
+
+    @Test
+    fun get_whenStoreThrowsWrappedGeneralSecurityException_returnsDataCorrupted() = runTest {
+        // A real implementation may need to wrap the checked
+        // GeneralSecurityException in an unchecked exception to
+        // propagate it through SharedPreferences.getString(), whose
+        // interface signature declares no checked exceptions. The
+        // mapping must see through that wrapper via the cause chain,
+        // not just an exact type match on the outermost exception.
+        val store = FakeSecureKeyValueStore()
+        val (storage, _) = storage(testScheduler, store)
+        store.failNextWith = RuntimeException(
+            "wrapped",
+            java.security.GeneralSecurityException("simulated corrupted ciphertext")
+        )
+
+        val result = storage.get("token")
+
+        assertTrue(result is AerivaResult.Failure)
+        assertTrue((result as AerivaResult.Failure).error is AerivaError.DataCorrupted)
+    }
+
+    @Test
+    fun clear_removesEverything() = runTest {
+        val (storage, _) = storage(testScheduler)
+        storage.set("token", "secret-value")
+        storage.set("relay_session", "another-value")
+
+        storage.clear()
+
+        assertEquals(AerivaResult.Success(null), storage.get("token"))
+        assertEquals(AerivaResult.Success(null), storage.get("relay_session"))
     }
 }

@@ -1116,3 +1116,132 @@ which remains genuinely untested (not merely unclaimed) and should be
 done on real hardware before this code is trusted in a context where
 physical-device-only behavior (OEM Keystore quirks, real battery/Doze
 behavior, real radio/sensor behavior) matters.
+
+## AF. K.2 resolved: corrupted ciphertext with a valid Keystore key
+
+### Inspection (requirement 1)
+
+Reviewed `AerivaSecureStorage`, `EncryptedPreferencesSecureStorage`,
+`SecureKeyValueStore`, `SharedPreferencesKeyValueStore`,
+`AerivaSecureStorageFactory`, and both existing test files before
+changing anything. Found: `AerivaSecureStorageFactory.create()` already
+correctly isolates the *lost/invalid Keystore key* scenario (catches at
+construction time, deletes and rebuilds once -- automatic recovery is
+deliberate there because a lost key makes existing ciphertext
+permanently unreadable regardless of what the code does). But every
+per-value read/write failure downstream of that -- including a
+corrupted individual value with a perfectly valid key -- was mapped to
+the same generic `AerivaError.Unknown` as any other failure. That is
+the actual K.2 gap: not missing error handling (nothing crashed, nothing
+fabricated data), but a missing *distinction*.
+
+### Reproduction (requirement 2)
+
+Two levels, both real, neither simulated by assertion alone:
+
+1. **Unit-test level** (`EncryptedPreferencesSecureStorageTest`): a
+   fake store throws a real `java.security.GeneralSecurityException`
+   (and, separately, one wrapped inside a `RuntimeException`) from
+   `get()`, proving the mapping logic itself.
+2. **Instrumented, on-device level**
+   (`AerivaSecureStorageCorruptionInstrumentedTest`, new file): writes
+   a real value through the real Keystore-backed
+   `EncryptedSharedPreferences`, locates the real on-disk preferences
+   XML file (`Context.getSharedPreferencesPath`), corrupts the actual
+   ciphertext bytes of the one real user entry (explicitly skipping
+   Jetpack Security's two fixed, unencrypted keyset-bootstrap entry
+   names, so this targets ciphertext corruption specifically, not
+   key/keyset loss), then reopens the store with the same untouched
+   Keystore key and reads the corrupted value back.
+
+### Determined correct production behavior (requirement 3)
+
+A `GeneralSecurityException` -- or an unchecked exception wrapping one,
+since `SharedPreferences.getString()`'s interface signature cannot
+declare a checked exception not in its parent -- is mapped to the
+existing `AerivaError.DataCorrupted` case instead of `AerivaError.Unknown`.
+Verified against all four "must never" conditions in the request:
+
+- **Never silently returns fabricated data** -- the result is a
+  `Failure`, not a default/empty value standing in for the corrupted
+  one (proven by the instrumented test's explicit assertion on this).
+- **Never exposes corrupted ciphertext as a valid value** -- the raw
+  exception is caught before it can propagate the corrupted bytes
+  anywhere; only the classified `AerivaResult.Failure` is returned.
+- **Never crashes unnecessarily** -- the existing `runCatching` wrapper
+  already caught every exception type before this change; this change
+  only changes *which* `AerivaError` case a security exception maps to,
+  not whether it's caught.
+- **Never destroys valid data merely because a read failed** -- no
+  delete/reset call exists anywhere in the per-value read/write path
+  (`EncryptedPreferencesSecureStorage`). Deletion only ever happens in
+  `AerivaSecureStorageFactory`'s construction-time catch, which this
+  change does not touch. The instrumented test proves this directly:
+  after the corruption, a *different* key can still be written and
+  read back correctly.
+
+### Test added (requirement 4)
+
+Three new tests total: two unit tests (direct `GeneralSecurityException`,
+and one wrapped in `RuntimeException`, both asserting `DataCorrupted`)
+plus the instrumented on-device reproduction described above.
+
+### Existing architecture reused, not replaced (requirement 5)
+
+`AerivaError.DataCorrupted` already existed (added for `core:database`'s
+identical class of problem -- see section K originally, and the
+`RoomNetworkHistoryRepository` pattern this mirrors exactly: catch a
+specific corruption-indicating exception type, map to `DataCorrupted`;
+everything else maps to `Unknown`). No new error type, no new
+abstraction, no changes to `AerivaSecureStorage`'s public interface.
+
+### Lost/invalid-key behavior unchanged (requirement 6)
+
+`AerivaSecureStorageFactory.create()`'s try/catch/delete/rebuild logic
+was not modified. `FILE_NAME`'s visibility was widened from `private`
+to `internal` (so the new instrumented test can reference the real
+constant instead of duplicating the literal) -- a visibility change
+only, not a behavior change.
+
+### Verification (requirements 7-10) -- honest status, not assumed
+
+**This sandboxed development environment has no Gradle, Android SDK,
+or Kotlin compiler** (established and re-confirmed throughout this
+entire report) -- every test above was written and carefully reviewed
+by hand, not executed locally. That has been true for every change in
+this report; nothing new here.
+
+**What is new: GitHub Actions minutes for this account are fully
+exhausted for the current billing cycle** (2,000 / 2,000 used,
+confirmed directly from GitHub's own usage-limit notification,
+resetting 2026-10-01). This means requirement 10 -- running CI again
+and confirming build/unit-tests/static-checks/instrumented-tests-emulator
+all pass together -- **cannot be completed right now**, not because of
+a code problem, but because there is no remaining CI capacity this
+cycle unless additional usage is purchased or the budget is
+explicitly raised. This is stated plainly rather than worked around,
+consistent with every other honesty requirement in this report.
+
+**BUILD:** NOT EXECUTED (environment limit, as always)
+**UNIT TESTS:** NOT EXECUTED locally; reviewed by hand, evidence-based
+(requirement 2's unit-test-level reproduction)
+**INSTRUMENTED TESTS:** NOT EXECUTED (needs real Android runtime + CI
+capacity, both currently unavailable); written and reviewed, matching
+the same standard as every other instrumented test in this report
+before its first real run
+**CI:** BLOCKED -- Actions minutes exhausted for this billing cycle,
+not a run failure
+
+### git diff / status (requirement 12)
+
+```
+ M core/security/.../AerivaSecureStorageFactory.kt              (visibility only)
+ M core/security/.../EncryptedPreferencesSecureStorage.kt        (the actual fix)
+ M core/security/.../EncryptedPreferencesSecureStorageTest.kt    (2 new unit tests)
+?? core/security/.../AerivaSecureStorageCorruptionInstrumentedTest.kt  (new file)
+```
+No remote changes existed to reconcile before this commit. Exactly the
+four files above changed -- nothing else touched.
+
+## K.2 STATUS: RESOLVED (code + tests complete; CI confirmation pending
+Actions-minutes reset or budget change -- see above)

@@ -18,7 +18,15 @@ import com.aeriva.core.logging.AerivaLogger
  */
 object AerivaSecureStorageFactory {
 
-    private const val FILE_NAME = "aeriva_secure_prefs"
+    /**
+     * Internal, not private: the instrumented corruption-reproduction
+     * test (see AerivaSecureStorageCorruptionInstrumentedTest) needs to
+     * locate the real on-disk preferences file this class creates, and
+     * referencing this constant directly avoids a second, independently
+     * maintained copy of the literal silently drifting out of sync with
+     * this one.
+     */
+    internal const val FILE_NAME = "aeriva_secure_prefs"
 
     fun create(context: Context, logger: AerivaLogger, dispatchers: AerivaDispatchers): AerivaSecureStorage {
         val appContext = context.applicationContext
