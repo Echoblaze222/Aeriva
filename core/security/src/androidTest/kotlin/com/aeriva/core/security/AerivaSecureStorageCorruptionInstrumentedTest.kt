@@ -39,6 +39,31 @@ class AerivaSecureStorageCorruptionInstrumentedTest {
 
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
 
+    /**
+     * Context.getSharedPreferences(name, mode) caches the returned
+     * SharedPreferencesImpl per process, keyed by file name -- this is
+     * internal to ContextImpl and not part of the public API contract.
+     * Without evicting that cache, a second create() call in the same
+     * process (as this test does, to simulate "reopen after disk
+     * corruption") hands back the same in-memory instance from before
+     * the corruption, which still holds the pre-corruption value and
+     * never re-reads the now-corrupted file from disk. That silently
+     * defeats the entire point of this test: it would pass a stale,
+     * cached read off as proof the corruption path works.
+     *
+     * Reflection is unfortunately the only lever available here: there
+     * is no public API to evict a single SharedPreferences instance
+     * from that cache.
+     */
+    private fun evictCachedSharedPreferences(context: android.content.Context, name: String) {
+        val contextImplClass = Class.forName("android.app.ContextImpl")
+        val cacheField = contextImplClass.getDeclaredField("sSharedPrefsCache")
+        cacheField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val cache = cacheField.get(null) as? MutableMap<String, MutableMap<String, android.content.SharedPreferences>>
+        cache?.get(context.packageName)?.remove(name)
+    }
+
     @Test
     fun get_onRealCorruptedCiphertext_returnsDataCorrupted_withoutDestroyingOtherEntries() = runTest {
         // Start from a clean, real, Keystore-backed store.
@@ -80,6 +105,12 @@ class AerivaSecureStorageCorruptionInstrumentedTest {
         val valueRange = userEntries.first().groups[2]!!.range
         val corruptedCiphertext = userEntries.first().groupValues[2].reversed()
         prefsFile.writeText(original.replaceRange(valueRange, corruptedCiphertext))
+
+        // Evict Android's process-level SharedPreferences cache so the
+        // next create() below actually re-reads the (now corrupted)
+        // file from disk instead of returning the still-valid,
+        // still-cached in-memory instance from before the corruption.
+        evictCachedSharedPreferences(context, AerivaSecureStorageFactory.FILE_NAME)
 
         // Reopen fresh from disk with the SAME, still-valid Keystore
         // key -- this is the "valid key, corrupted ciphertext" scenario.
