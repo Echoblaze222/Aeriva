@@ -126,6 +126,46 @@ class EncryptedPreferencesSecureStorageTest {
     }
 
     @Test
+    fun get_whenStoreThrowsIllegalArgumentException_returnsDataCorruptedNotUnknown() = runTest {
+        // The other real corruption shape, distinct from the
+        // GeneralSecurityException one above: EncryptedSharedPreferences's
+        // own source (getDecryptedObject(String)) base64-decodes the
+        // stored ciphertext text BEFORE the AEAD decrypt call is ever
+        // reached, and a malformed base64 string throws
+        // IllegalArgumentException there -- with no GeneralSecurityException
+        // anywhere in its cause chain. Real on-disk corruption (a partial
+        // write, a byte landing on base64 padding) can plausibly produce
+        // either shape, and both mean the same thing at this layer:
+        // storage engine fine, this stored value is not -- see
+        // EncryptedPreferencesSecureStorage's own doc comment on why this
+        // is mapped the same as the GeneralSecurityException case rather
+        // than falling through to a generic Unknown.
+        val store = FakeSecureKeyValueStore()
+        val (storage, _) = storage(testScheduler, store)
+        store.failNextWith = IllegalArgumentException("simulated malformed base64 ciphertext")
+
+        val result = storage.get("token")
+
+        assertTrue(result is AerivaResult.Failure)
+        assertTrue((result as AerivaResult.Failure).error is AerivaError.DataCorrupted)
+    }
+
+    @Test
+    fun get_whenStoreThrowsWrappedIllegalArgumentException_returnsDataCorrupted() = runTest {
+        val store = FakeSecureKeyValueStore()
+        val (storage, _) = storage(testScheduler, store)
+        store.failNextWith = RuntimeException(
+            "wrapped",
+            IllegalArgumentException("simulated malformed base64 ciphertext")
+        )
+
+        val result = storage.get("token")
+
+        assertTrue(result is AerivaResult.Failure)
+        assertTrue((result as AerivaResult.Failure).error is AerivaError.DataCorrupted)
+    }
+
+    @Test
     fun clear_removesEverything() = runTest {
         val (storage, _) = storage(testScheduler)
         storage.set("token", "secret-value")

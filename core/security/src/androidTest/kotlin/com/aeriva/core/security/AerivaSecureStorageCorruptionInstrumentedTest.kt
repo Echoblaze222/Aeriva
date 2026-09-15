@@ -122,7 +122,34 @@ class AerivaSecureStorageCorruptionInstrumentedTest {
             userEntries.size
         )
         val valueRange = userEntries.first().groups[2]!!.range
-        val corruptedCiphertext = userEntries.first().groupValues[2].reversed()
+        // Corrupt at the BYTE level, after base64-decoding, then
+        // re-encode -- not by reversing the base64 TEXT directly.
+        // Reversing the text also frequently moves the trailing '='
+        // padding character to the front, which is not legal base64
+        // syntax. Per EncryptedSharedPreferences's own source
+        // (getDecryptedObject(String)), the stored value is
+        // base64-decoded BEFORE the AEAD decrypt call is ever reached;
+        // malformed base64 syntax fails at that decode step with
+        // IllegalArgumentException, not at the AEAD layer with
+        // GeneralSecurityException -- a different failure shape than
+        // the "valid ciphertext bytes that just don't authenticate"
+        // scenario this test claims to exercise (K.2's own name for
+        // it: "valid key, corrupted ciphertext"). Flipping one byte
+        // within the already-decoded ciphertext keeps the base64
+        // syntax (and length) valid while still guaranteeing the GCM
+        // authentication tag no longer matches, reliably reaching the
+        // AEAD-decrypt failure path instead of the base64-decode one.
+        val originalCiphertextBytes = android.util.Base64.decode(
+            userEntries.first().groupValues[2],
+            android.util.Base64.NO_WRAP
+        )
+        val corruptedCiphertextBytes = originalCiphertextBytes.copyOf()
+        val flipIndex = corruptedCiphertextBytes.size / 2
+        corruptedCiphertextBytes[flipIndex] = corruptedCiphertextBytes[flipIndex].inc()
+        val corruptedCiphertext = android.util.Base64.encodeToString(
+            corruptedCiphertextBytes,
+            android.util.Base64.NO_WRAP
+        )
         prefsFile.writeText(original.replaceRange(valueRange, corruptedCiphertext))
 
         // Evict Android's process-level SharedPreferences cache so the

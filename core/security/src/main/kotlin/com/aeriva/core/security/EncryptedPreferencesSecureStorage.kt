@@ -59,6 +59,23 @@ internal class EncryptedPreferencesSecureStorage(
      * exception itself covers that wrapping without assuming one
      * specific wrapper type.
      *
+     * A second, distinct corruption shape maps here too: per
+     * EncryptedSharedPreferences's own source
+     * (getDecryptedObject(String)), the stored ciphertext is base64
+     * text decoded *before* the AEAD decrypt call is ever reached --
+     * `Base64.decode(encryptedValue, ...)` -- and a malformed base64
+     * string (not just a syntactically-valid one carrying corrupted
+     * ciphertext bytes) throws IllegalArgumentException, which carries
+     * no GeneralSecurityException anywhere in its cause chain. Real
+     * on-disk corruption (a partial write, a truncated file, a flipped
+     * byte landing on the base64 padding) can plausibly produce either
+     * shape, and both are exactly the same underlying fact from this
+     * layer's point of view: the storage engine is fine, this specific
+     * stored value is not. Treating one as DataCorrupted and the other
+     * as a generic Unknown would be an accident of which layer happened
+     * to notice the damage first, not a meaningful distinction for a
+     * caller deciding how to respond.
+     *
      * This is deliberately mapped to the existing [AerivaError.DataCorrupted]
      * case (already defined for exactly this class of "storage engine
      * is fine, this specific data is not" failure -- see
@@ -67,7 +84,11 @@ internal class EncryptedPreferencesSecureStorage(
      */
     private fun Throwable.toAerivaError(): AerivaError {
         logger.e(TAG, "Secure storage operation failed", this)
-        return if (this is GeneralSecurityException || cause is GeneralSecurityException) {
+        val isCorruption = this is GeneralSecurityException ||
+            cause is GeneralSecurityException ||
+            this is IllegalArgumentException ||
+            cause is IllegalArgumentException
+        return if (isCorruption) {
             AerivaError.DataCorrupted(this)
         } else {
             AerivaError.Unknown(this)
