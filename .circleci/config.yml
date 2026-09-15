@@ -1,68 +1,140 @@
 version: 2.1
 
 orbs:
+  # v3.2.0 is the current latest release (confirmed against the orb's
+  # GitHub releases page, not assumed from the version already pinned
+  # here) -- no change needed on that front.
   android: circleci/android@3.2.0
 
-# Assumes this Gradle project lives at "android/" in the repository root
-# (as delivered). If the repo root IS the Gradle project root instead,
-# remove the "android" path segment from every working_directory,
-# checksum path, and store_test_results/store_artifacts path below.
+# The Gradle/Android project is the REPOSITORY ROOT, not an "android/"
+# subdirectory -- there is no such subdirectory in this repo. An earlier
+# version of this file assumed one throughout (every working_directory,
+# checksum path, and store_test_results/store_artifacts path), which
+# made every step here silently operate on a path that does not exist.
 #
-# The wrapper jar is intentionally not committed (see android/README.md)
-# -- the first real step of each job bootstraps it from the Docker/
-# machine image's pre-installed Gradle before anything else runs.
+# Separately, and independent of that path bug: gradlew, gradlew.bat, and
+# gradle/wrapper/gradle-wrapper.jar are already committed to this repo
+# and were manually verified when added (see the commit that introduced
+# them, and the GitHub Actions workflow's own comment on the equivalent
+# step). An earlier version of this file ran
+# `gradle wrapper --gradle-version 8.14` against the Docker/machine
+# image's own pre-installed Gradle before every job -- that command
+# would have regenerated (and potentially altered) the already-verified
+# wrapper on every run, rather than just fixing its working directory.
+# The correct fix is to not run that step at all and use the committed
+# ./gradlew directly, the same way the working GitHub Actions pipeline
+# does.
+#
+# Jobs are kept separate (build / unit-tests / static-checks /
+# instrumented-tests), matching .github/workflows/ci.yml, so each
+# category's pass/fail is independently visible here too -- see that
+# workflow's own comment on why "build passed" and "tests passed" are
+# tracked as distinct claims, not one bundled status.
 
-jobs:
-  build_and_unit_test:
-    docker:
-      - image: cimg/android:2026.07
-    resource_class: large
+commands:
+  ensure_sdk_platform:
+    description: >
+      Ensure Android SDK Platform 36 and matching build-tools are
+      installed. compileSdk/targetSdk = 36 and AGP = 8.13.2 are pinned in
+      gradle/libs.versions.toml (see that file's own version comments for
+      why); this does not hard-code a second, independently-maintained
+      copy of those numbers, it just makes sure the matching SDK package
+      is present before Gradle needs it.
     steps:
-      - checkout
-
-      - run:
-          name: Generate Gradle wrapper (pins the version this project was authored against)
-          command: gradle wrapper --gradle-version 8.14
-          working_directory: android
-
       - run:
           name: Ensure Android SDK Platform 36 and matching build-tools are installed
           command: |
             yes | sdkmanager --licenses || true
             sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
+  restore_gradle_deps_cache:
+    steps:
       - restore_cache:
           keys:
-            - gradle-deps-{{ checksum "android/gradle/libs.versions.toml" }}
+            - gradle-deps-v2-{{ checksum "gradle/libs.versions.toml" }}
 
-      - run:
-          name: Assemble debug APK
-          command: ./gradlew assembleDebug --stacktrace
-          working_directory: android
-
+  save_gradle_deps_cache:
+    steps:
       - save_cache:
-          key: gradle-deps-{{ checksum "android/gradle/libs.versions.toml" }}
+          key: gradle-deps-v2-{{ checksum "gradle/libs.versions.toml" }}
           paths:
             - ~/.gradle/caches
             - ~/.gradle/wrapper
 
+jobs:
+  build:
+    docker:
+      - image: cimg/android:2026.07
+    resource_class: large
+    steps:
+      - checkout
+      - restore_gradle_deps_cache
+      - ensure_sdk_platform
       - run:
-          name: Run unit tests (all modules)
-          command: ./gradlew test --stacktrace
-          working_directory: android
+          name: Gradle version sanity check
+          command: ./gradlew --version
+      - run:
+          name: Assemble (compiles every module, including Android sources)
+          command: ./gradlew assembleDebug --stacktrace
+          no_output_timeout: 15m
+      - save_gradle_deps_cache
+      - store_artifacts:
+          path: app/build/outputs/apk/debug
 
+  unit_tests:
+    docker:
+      - image: cimg/android:2026.07
+    resource_class: large
+    steps:
+      - checkout
+      - restore_gradle_deps_cache
+      - ensure_sdk_platform
+      - run:
+          # Same split as .github/workflows/ci.yml's unit-tests job:
+          # `test` covers the pure-Kotlin modules (core:common, core:model,
+          # core:result); `testDebugUnitTest` covers the Android library
+          # modules (core:logging, core:database, core:preferences,
+          # core:security, network:monitor). Neither alone covers every
+          # module in this repo.
+          name: Run unit tests (all modules)
+          command: ./gradlew test testDebugUnitTest --stacktrace
+          no_output_timeout: 15m
       - run:
           name: Collect JUnit XML for CircleCI test insights
           command: |
-            mkdir -p android/test-results
-            find android -path "*/build/test-results/*/*.xml" -exec cp {} android/test-results/ \;
+            mkdir -p test-results
+            find . -path "*/build/test-results/*/*.xml" -not -path "./test-results/*" -exec cp {} test-results/ \;
           when: always
-
       - store_test_results:
-          path: android/test-results
-
+          path: test-results
       - store_artifacts:
-          path: android/app/build/outputs/apk/debug
+          path: test-results
+
+  static_checks:
+    docker:
+      - image: cimg/android:2026.07
+    resource_class: large
+    steps:
+      - checkout
+      - restore_gradle_deps_cache
+      - ensure_sdk_platform
+      - run:
+          # No separate static-analysis tool (ktlint/detekt) is
+          # configured in this repo yet -- Android Lint is what "relevant
+          # static checks" means right now, matching
+          # .github/workflows/ci.yml's static-checks job and its own
+          # comment on this.
+          name: Run Android Lint
+          command: ./gradlew lint --stacktrace
+          no_output_timeout: 15m
+      - run:
+          name: Collect lint reports for upload
+          command: |
+            mkdir -p lint-reports
+            find . -path "*/build/reports/lint-results*" -exec cp {} lint-reports/ \;
+          when: always
+      - store_artifacts:
+          path: lint-reports
 
   connected_android_test:
     executor:
@@ -71,36 +143,45 @@ jobs:
       tag: default
     steps:
       - checkout
-
       - run:
-          name: Generate Gradle wrapper (pins the version this project was authored against)
-          command: gradle wrapper --gradle-version 8.14
-          working_directory: android
-
+          name: Confirm the committed Gradle wrapper is present and executable
+          command: |
+            test -x ./gradlew
+            ./gradlew --version
+      # Matches .github/workflows/ci.yml's instrumented-tests-emulator job:
+      # api-level 30, google_apis, x86_64 -- kept identical on purpose so
+      # this pipeline validates the same emulator target as the working
+      # GitHub Actions one, not a different one that happens to also pass.
       - android/start_emulator_and_run_tests:
           avd_name: aeriva-test
           system_image: system-images;android-30;google_apis;x86_64
           install_system_image: true
-          run_tests_working_directory: android
           test_command: ./gradlew connectedAndroidTest --stacktrace
-          restore_gradle_cache_prefix: v1-aeriva
+          restore_gradle_cache_prefix: v2-aeriva
           save_gradle_cache: true
           kill_emulators: true
-
+          no_output_timeout: 20m
       - run:
           name: Collect JUnit XML for CircleCI test insights
           command: |
-            mkdir -p android/test-results
-            find android -path "*/build/outputs/androidTest-results/*/*.xml" -exec cp {} android/test-results/ \;
+            mkdir -p test-results
+            find . -path "*/build/outputs/androidTest-results/*/*.xml" -not -path "./test-results/*" -exec cp {} test-results/ \;
           when: always
-
       - store_test_results:
-          path: android/test-results
+          path: test-results
+      - store_artifacts:
+          path: test-results
 
 workflows:
   build_test_and_validate:
     jobs:
-      - build_and_unit_test
+      - build
+      - unit_tests:
+          requires:
+            - build
+      - static_checks:
+          requires:
+            - build
       - connected_android_test:
           requires:
-            - build_and_unit_test
+            - build
