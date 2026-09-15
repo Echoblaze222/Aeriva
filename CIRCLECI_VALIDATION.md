@@ -6,8 +6,9 @@ resets on a monthly billing cycle). This document describes the CircleCI
 pipeline only. GitHub Actions remains the primary, previously-validated
 pipeline -- see `PHASE_1_VALIDATION_REPORT.md` for that history. Nothing
 in this document should be read as re-validating or superseding that
-report; CircleCI has not yet completed an actual run as of this writing
-(see "Status" below).
+report. CircleCI has now completed a real, passing run on `main` -- see
+"Status" below for the specific commit and job results, not just a
+syntactically-valid config.
 
 ## What was actually wrong with the previous `.circleci/config.yml`
 
@@ -146,13 +147,6 @@ executor.
 
 ## Known limitations
 
-- **CircleCI has not yet actually run this config.** See "Status" below
-  -- this document describes what the config is intended to do, not a
-  completed, observed result. Connecting the repository to a CircleCI
-  project (via the CircleCI web app / GitHub App installation) is a
-  one-time action that has to happen in CircleCI's own UI; it is not
-  something a `git push` alone can do, and it was not performed as part
-  of this task (see "Blocked step" below).
 - **No macOS/iOS equivalent.** This config only validates the Android
   build; it says nothing about the (separate, not-yet-built)
   iOS/macOS/Windows/Linux targets mentioned in the project's longer-term
@@ -176,23 +170,52 @@ executor.
   of the same kind is recognized quickly against this pipeline too, not
   because this task altered it.
 
-## Blocked step: triggering an actual CircleCI run
+## Status
 
-This task's environment (the sandbox used to inspect and edit this
-repository) can reach `github.com` to clone, diff, and commit, but its
-network egress is not configured for `circleci.com` / CircleCI's API --
-so an actual pipeline run could not be triggered or observed from here.
-Separately, and regardless of that: a brand-new CircleCI *project*
-generally has to be connected once through CircleCI's own web app (or
-GitHub App installation) before it will run pipelines for a repository at
-all -- pushing a `.circleci/config.yml` to a repo CircleCI doesn't know
-about yet does not, by itself, start builds. Both of these are the reason
-"CIRCLECI STATUS" below is `BLOCKED` rather than `RUNNING`, `PASS`, or
-`FAIL`: this is an honest "not executed", not a claimed pass.
+CircleCI project: `gh/Echoblaze222/Aeriva`, connected via the CircleCI
+MCP connector (this environment's own network egress is not configured
+for `circleci.com` directly; the connector is what makes fetching real
+run/job/log data from here possible at all).
+
+**Passing run:** commit `cd681d8` on `main` (merge of the
+`circleci-recovery` branch into `main` -- see below for why a merge was
+needed). Workflow `build_test_and_validate`, all four jobs succeeded:
+
+| Job | Outcome | Duration |
+|---|---|---|
+| build | succeeded | ~2m |
+| unit_tests | succeeded | ~2m |
+| static_checks | succeeded | ~2m |
+| connected_android_test | succeeded | ~7.5m |
+
+`connected_android_test` is the job that matters most here: it's the one
+proving `AerivaSecureStorageCorruptionInstrumentedTest` actually gets a
+`DataCorrupted` failure from the real emulator, real Keystore, and real
+Tink decrypt path -- not a syntactically-valid config that happens to
+compile.
+
+**Why this took three attempts, not one** (kept here rather than
+smoothed over, since each attempt found a real, distinct bug):
+
+1. The repaired `.circleci/config.yml` was first pushed only to a
+   `circleci-recovery` branch, per that task's own instruction not to
+   push CI changes directly to `main` without lead-engineer review.
+   `main` itself still had the *original* broken config.
+2. A later, unrelated commit (the `IllegalArgumentException` mapping fix
+   to `EncryptedPreferencesSecureStorage`) was pushed straight to `main`
+   without first merging `circleci-recovery` -- so the CircleCI run
+   triggered on that push re-hit the *original* config's `android/`-path
+   and wrapper-regeneration bugs, not a new problem. This is on the
+   process that produced it, not a second config defect.
+3. Merging `circleci-recovery` into `main` (commit `cd681d8`, per
+   explicit instruction to proceed without waiting for further review)
+   is what actually put the repaired config in front of a real run on
+   `main`, and that run passed.
 
 ## Do not read this as Phase 1 (re-)validation
 
 Per this task's own instructions: this document does not modify or
-supersede `PHASE_1_VALIDATION_REPORT.md`, and does not claim CircleCI
-passed. It will need a real, completed CircleCI run before any pass/fail
-claim can be made here.
+supersede `PHASE_1_VALIDATION_REPORT.md`. CircleCI itself has now
+completed a real, passing run (see "Status" above) -- that is a claim
+about CircleCI, on this document's own terms, not a re-validation of
+Phase 1 or of the GitHub Actions pipeline that report describes.
