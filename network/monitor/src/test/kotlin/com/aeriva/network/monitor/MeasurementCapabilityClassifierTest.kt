@@ -29,6 +29,37 @@ class MeasurementCapabilityClassifierTest {
     }
 
     @Test
+    fun dnsResponsiveness_withInternetPermission_isEstimated_notSupported() {
+        // Regression test for the Phase 3B contract fix
+        // (PHASE_3B_ANDROID_MEASUREMENT_IMPLEMENTATION_CONTRACT.md, Task
+        // 10): a timed DNS lookup must never classify the same as a
+        // direct measurement (Supported) -- it belongs in the
+        // ESTIMATION tier because OS/carrier/resolver caching confounds
+        // it. This must stay Estimated even once INTERNET is granted;
+        // granting the permission only removes the platform-access
+        // blocker, it does not change what kind of result a DNS timing
+        // probe can honestly produce.
+        val result = MeasurementCapabilityClassifier.classify(
+            capability = MeasurementCapability.DNS_RESPONSIVENESS,
+            sdkInt = 34,
+            grantedPermissions = setOf(MeasurementCapabilityClassifier.PERMISSION_INTERNET)
+        )
+
+        assertTrue(result is CapabilityClassification.Estimated)
+    }
+
+    @Test
+    fun dnsResponsiveness_withoutInternetPermission_isNotReliablyAvailable() {
+        val result = MeasurementCapabilityClassifier.classify(
+            capability = MeasurementCapability.DNS_RESPONSIVENESS,
+            sdkInt = 34,
+            grantedPermissions = emptySet()
+        )
+
+        assertTrue(result is CapabilityClassification.NotReliablyAvailable)
+    }
+
+    @Test
     fun packetLoss_withInternetPermission_isSupportedWithLimitations() {
         val result = MeasurementCapabilityClassifier.classify(
             capability = MeasurementCapability.PACKET_LOSS,

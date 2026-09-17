@@ -83,10 +83,41 @@ object MeasurementCapabilityClassifier {
         // not by anything version- or location-dependent.
         MeasurementCapability.LATENCY,
         MeasurementCapability.JITTER,
-        MeasurementCapability.DNS_RESPONSIVENESS,
         MeasurementCapability.HTTPS_REACHABILITY ->
             if (PERMISSION_INTERNET in grantedPermissions) {
                 CapabilityClassification.Supported
+            } else {
+                CapabilityClassification.NotReliablyAvailable(
+                    "INTERNET permission not held -- not yet declared in this repository's manifest"
+                )
+            }
+
+        // Fixed in the Phase 3B contract review
+        // (PHASE_3B_ANDROID_MEASUREMENT_IMPLEMENTATION_CONTRACT.md,
+        // Task 10): this branch previously classified DNS responsiveness
+        // as Supported alongside latency/jitter/HTTPS reachability. That
+        // was a real inconsistency, not a documentation-only nuance --
+        // PHASE_3B_ANDROID_MEASUREMENT_CAPABILITY_REPORT.md's own
+        // capability table (row 9) and this task's own explicit
+        // instruction ("Do not label an estimate as a direct
+        // measurement") both require DNS timing to sit in the
+        // ESTIMATION tier this codebase's domain model already
+        // distinguishes at the type level
+        // (`core:model`'s measurement package, Phase 3A), not the
+        // MEASUREMENT tier `Supported` represents here. A timed
+        // `InetAddress`/socket-level DNS resolution is confounded by
+        // OS-level, carrier-level, and resolver-level caching -- see
+        // `LinkProperties.getDnsServers()`/`isPrivateDnsActive()`
+        // (current official reference docs), which expose *which*
+        // resolver is configured (an observation) but nothing about that
+        // resolver's live responsiveness, so a timed lookup is
+        // necessarily an indirect proxy, not a controlled measurement of
+        // the resolver itself.
+        MeasurementCapability.DNS_RESPONSIVENESS ->
+            if (PERMISSION_INTERNET in grantedPermissions) {
+                CapabilityClassification.Estimated(
+                    "a timed lookup is confounded by OS/carrier/resolver DNS caching -- an indirect proxy for responsiveness, not a controlled measurement of it"
+                )
             } else {
                 CapabilityClassification.NotReliablyAvailable(
                     "INTERNET permission not held -- not yet declared in this repository's manifest"
