@@ -4,7 +4,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -80,7 +80,15 @@ class FakeNetworkClientTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
 
         val deferred = async(dispatcher) { client.probe("a") }
-        advanceUntilIdle()
+        // runCurrent(), not advanceUntilIdle() -- see
+        // ReferenceLatencyProbeExecutorTest's cancellation test for why
+        // that distinction matters (found via a real CI failure there).
+        // Nothing else is scheduled in this test, so it happens not to
+        // matter here either way, but runCurrent() is the correct
+        // primitive for "advance only to the first suspension point,"
+        // which is what this test actually means -- not a
+        // coincidentally-working call.
+        runCurrent()
         deferred.cancel()
         deferred.join()
 
@@ -95,7 +103,7 @@ class FakeNetworkClientTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
 
         val deferred = async(dispatcher) { client.probe("a") }
-        advanceUntilIdle()
+        runCurrent()
         deferred.cancel()
         deferred.await()
     }

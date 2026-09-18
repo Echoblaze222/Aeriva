@@ -16,7 +16,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -95,18 +95,11 @@ class ReferenceLatencyProbeExecutorTest {
     @Test
     fun measure_onCallerCancellation_propagates_andEmitsNoResult() = runTest {
         val client = FakeNetworkClient().apply { enqueueHang() }
-        // Timeout far longer than this test will ever run to, so the
-        // cancellation under test is unambiguously caller-initiated, not
-        // the timeout path already covered above. NOT Long.MAX_VALUE (or
-        // a fraction of it): withTimeout converts its millisecond
-        // argument to nanoseconds internally, and a value that large
-        // overflows Long there -- the first version of this test used
-        // Long.MAX_VALUE / 2 and failed for exactly that reason (the
-        // overflowed deadline made the timeout fire immediately, so the
-        // "cancelled" coroutine actually completed normally via the
-        // Timeout path, defeating the point of this test). One
-        // (virtual) day is "effectively never" for this test without
-        // going anywhere near that boundary.
+        // A large-but-ordinary timeout, not Long.MAX_VALUE or a fraction
+        // of it -- withTimeout converts its millisecond argument to
+        // nanoseconds internally, and a value that large overflows Long
+        // there. One (virtual) day avoids that boundary with room to
+        // spare.
         val executor = executor(client, timeoutMillis = ONE_DAY_MILLIS)
 
         var sawAResult = false
@@ -115,7 +108,33 @@ class ReferenceLatencyProbeExecutorTest {
             sawAResult = true
         }
 
-        advanceUntilIdle()
+        // runCurrent(), NOT advanceUntilIdle(), is the actual fix this
+        // test needed -- found via two real CircleCI failures, not
+        // reasoned out in advance:
+        //
+        // advanceUntilIdle() doesn't stop at "whatever's ready right
+        // now" -- it keeps advancing virtual time and running work until
+        // the scheduler's queue is completely empty. enqueueHang()'s
+        // own delay(Long.MAX_VALUE) is specifically exempted from that
+        // (the documented idiom this fake relies on for "never resolves
+        // on its own"), but withTimeout(ONE_DAY_MILLIS)'s deadline is an
+        // entirely ordinary scheduled event at virtual time = 1 day, and
+        // advanceUntilIdle() ran straight through it: the measurement
+        // completed via the Timeout path (a defined, non-buggy outcome
+        // in its own right -- see measure_onTimeout_... above) and set
+        // sawAResult = true *before job.cancel() was ever reached*,
+        // which is exactly what this test exists to rule out. A first
+        // attempt at fixing this by only changing the timeout value
+        // (avoiding the Long.MAX_VALUE/2 overflow above) still failed
+        // for this same reason -- any finite timeout, however large,
+        // has the identical problem under advanceUntilIdle(). runCurrent()
+        // only executes what's already scheduled for the current virtual
+        // instant, so it advances this coroutine to its first genuine
+        // suspension point (FakeNetworkClient's delay) and stops there,
+        // without ever reaching either deadline -- which is what makes
+        // the cancellation this test asserts on unambiguously
+        // caller-initiated.
+        runCurrent()
         job.cancel()
         job.join()
 
