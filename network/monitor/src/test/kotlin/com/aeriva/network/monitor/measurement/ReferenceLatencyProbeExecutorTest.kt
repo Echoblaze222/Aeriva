@@ -10,6 +10,7 @@ import com.aeriva.core.model.measurement.LatencyMeasurement
 import com.aeriva.core.model.measurement.MeasurementFailure
 import com.aeriva.core.model.measurement.MeasurementNetworkContext
 import java.time.Instant
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
@@ -36,8 +37,13 @@ import org.junit.Test
  * All `TestAerivaDispatchers`/`StandardTestDispatcher` instances share
  * `runTest`'s own `testScheduler`, per the official coroutine-testing
  * guidance ("All TestDispatchers should share the same scheduler") --
- * not an invention of this file.
+ * not an invention of this file. `TestScope.testScheduler` itself is
+ * still `@ExperimentalCoroutinesApi` in this repository's pinned
+ * kotlinx-coroutines-test version, hence the class-level opt-in below --
+ * confirmed via an actual CircleCI compiler warning on this branch, not
+ * assumed.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class ReferenceLatencyProbeExecutorTest {
 
     private val availableContext = MeasurementNetworkContext(
@@ -91,8 +97,17 @@ class ReferenceLatencyProbeExecutorTest {
         val client = FakeNetworkClient().apply { enqueueHang() }
         // Timeout far longer than this test will ever run to, so the
         // cancellation under test is unambiguously caller-initiated, not
-        // the timeout path already covered above.
-        val executor = executor(client, timeoutMillis = Long.MAX_VALUE / 2)
+        // the timeout path already covered above. NOT Long.MAX_VALUE (or
+        // a fraction of it): withTimeout converts its millisecond
+        // argument to nanoseconds internally, and a value that large
+        // overflows Long there -- the first version of this test used
+        // Long.MAX_VALUE / 2 and failed for exactly that reason (the
+        // overflowed deadline made the timeout fire immediately, so the
+        // "cancelled" coroutine actually completed normally via the
+        // Timeout path, defeating the point of this test). One
+        // (virtual) day is "effectively never" for this test without
+        // going anywhere near that boundary.
+        val executor = executor(client, timeoutMillis = ONE_DAY_MILLIS)
 
         var sawAResult = false
         val job = launch {
@@ -272,4 +287,10 @@ class ReferenceLatencyProbeExecutorTest {
         now = now,
         timeoutMillis = timeoutMillis
     )
+
+    private companion object {
+        /** See the comment at its one use site -- deliberately NOT a
+         * fraction of Long.MAX_VALUE. */
+        const val ONE_DAY_MILLIS = 86_400_000L
+    }
 }

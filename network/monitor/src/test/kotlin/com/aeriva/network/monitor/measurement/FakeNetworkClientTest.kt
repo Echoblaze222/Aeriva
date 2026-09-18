@@ -1,6 +1,7 @@
 package com.aeriva.network.monitor.measurement
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -15,7 +16,13 @@ import org.junit.Test
  * [com.aeriva.core.common.TestAerivaDispatchersTest]: the fake itself is
  * directly tested, not just used, so a test relying on it elsewhere can
  * trust its scripted behavior is what it claims to be.
+ *
+ * `@OptIn(ExperimentalCoroutinesApi::class)`: `TestScope.testScheduler`
+ * is still experimental in this repository's pinned
+ * kotlinx-coroutines-test version -- confirmed via an actual CircleCI
+ * compiler warning on this branch, not assumed.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class FakeNetworkClientTest {
 
     @Test
