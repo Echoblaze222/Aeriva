@@ -363,8 +363,24 @@ requirement was met.
 
 ## Validation
 
-This sandbox cannot run a Gradle build (Section 2). What's stated here
-is only what a real, observed CircleCI run on this branch's actual
-commit confirmed -- see the completion report accompanying this
-document for the specific run and commit SHA; this document does not
-itself claim a pass/fail on the strength of the code "looking correct."
+This sandbox cannot run a Gradle build (Section 2). Everything below is
+what real, observed CircleCI runs against this branch's actual commits
+confirmed -- three runs, not one, because the first two caught genuine
+test bugs (both in this new test code, not in anything pre-existing):
+
+| Commit | CircleCI run | `build` | `static_checks` | `unit_tests` | `connected_android_test` |
+|---|---|---|---|---|---|
+| `961b412` (initial) | `920ee1f7` | pass | pass | **fail** -- `ReferenceLatencyProbeExecutorTest.measure_onCallerCancellation_...`: `Long.MAX_VALUE / 2` passed as a timeout overflowed a nanosecond conversion inside `withTimeout`, firing it immediately | pass |
+| `252f919` (fix attempt 1) | `36894ea0` | -- | -- | **fail**, same test, same symptom -- the real cause was `advanceUntilIdle()` running straight through the (now-finite) timeout deadline before `job.cancel()` was reached | -- |
+| `35f3fcb` (fix attempt 2) | `cdca2769` | pass | pass | **pass** -- `runCurrent()` instead of `advanceUntilIdle()` was the actual fix | pass |
+
+All four CircleCI jobs pass on `35f3fcb`, the branch's current head.
+`unit_tests`' test-results upload confirms every new test class actually
+ran: `DerivedLatencyStatsTest`, `FakeNetworkClientTest`,
+`ReferenceLatencyProbeExecutorTest`, alongside every pre-existing test
+class unchanged. Both failed attempts and their root causes are kept in
+this branch's own commit history rather than squashed away -- see
+`252f919` and `35f3fcb`'s commit messages for the full diagnosis of
+each. This document does not claim a pass on the strength of the code
+"looking correct" at any point -- the two real failures above are the
+concrete evidence that claim would have been wrong twice.
