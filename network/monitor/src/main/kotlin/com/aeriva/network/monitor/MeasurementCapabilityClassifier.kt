@@ -168,10 +168,19 @@ object MeasurementCapabilityClassifier {
                 )
             }
 
-        // WifiManager.getConnectionInfo() -- fine location required at
-        // every currently-supported API level (this report's API
-        // analysis; PHASE_2_ANDROID_PLATFORM_AUDIT.md Section 3). Real
-        // Wi-Fi radio behavior is real-device-only regardless of
+        // Wi-Fi connection info -- fine location required at every
+        // currently-supported API level (this report's API analysis;
+        // PHASE_2_ANDROID_PLATFORM_AUDIT.md Section 3). Correction from
+        // PHASE_3B_ANDROID_CONTRACT_FINAL_FACT_CHECK.md: the API surface
+        // is ConnectivityManager.registerNetworkCallback(...) with
+        // NetworkCallback.FLAG_INCLUDE_LOCATION_INFO, reading
+        // NetworkCapabilities.getTransportInfo() as WifiInfo --
+        // NOT WifiManager.getConnectionInfo(), which current official
+        // reference docs mark deprecated since API 31. The permission
+        // requirement below (ACCESS_FINE_LOCATION) is unchanged by this
+        // correction -- both the deprecated and current API gate on the
+        // same permission; only the API surface citation was wrong.
+        // Real Wi-Fi radio behavior is real-device-only regardless of
         // permission state (PHASE_2_ANDROID_PLATFORM_AUDIT.md Section
         // 13) -- this classifier states the permission boundary only,
         // not real-device fidelity, which is not classifiable from
