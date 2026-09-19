@@ -35,6 +35,13 @@ kotlin {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:logging"))
+    // Phase 3B measurement engine: LatencyMeasurementEngine (src/main)
+    // uses AerivaDispatchers directly in production code -- a real
+    // main-source-set dependency, distinct from the testImplementation
+    // below (which exists only for AI 4's test-only
+    // ReferenceLatencyProbeExecutor and does not reach this module's
+    // production classpath).
+    implementation(project(":core:common"))
 
     implementation(libs.kotlinx.coroutines.android)
 
