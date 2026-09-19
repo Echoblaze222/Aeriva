@@ -10,6 +10,7 @@ import com.aeriva.core.model.measurement.MeasurementFailure
 import com.aeriva.core.model.measurement.MeasurementNetworkContext
 import com.aeriva.network.monitor.CapabilityClassification
 import com.aeriva.network.monitor.MeasurementCapability
+import com.aeriva.network.monitor.MeasurementCapabilityClassifier
 import java.time.Instant
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
