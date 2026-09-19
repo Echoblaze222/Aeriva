@@ -40,6 +40,13 @@ dependencies {
 
     testImplementation(libs.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Phase 3B measurement tests: AerivaDispatchers is the existing,
+    // repo-wide dispatcher seam (PHASE_3_NETWORK_MEASUREMENT_TEST_STRATEGY.md
+    // Section 1) -- ReferenceLatencyProbeExecutor depends on it instead
+    // of inventing a second seam. Test-only: neither dependency reaches
+    // this module's main source set or production classpath.
+    testImplementation(project(":core:common"))
+    testImplementation(testFixtures(project(":core:common")))
 
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.test.core)
