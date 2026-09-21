@@ -1,0 +1,91 @@
+{
+  "fixture_set": "udp-trains",
+  "fixture_format": "aeriva-fixture/1",
+  "synthetic": true,
+  "note": "SYNTHETIC TEST FIXTURES. Not real measurements. The reply classification rules below are PROVISIONAL harness rules. The authoritative wire protocol and reply-handling rules belong to the Phase 4B protocol specification and must replace them.",
+  "semantics_ref": "PHASE_4_CROSS_CUTTING_TECHNICAL_DECISION_CONTRACT.md D4-6 (fields answeredInWindow, lateAnswers, duplicateAnswers, outOfOrderAnswers; unanswered = probesSent - answeredInWindow; zero answers in window is a failure, never a 100 percent figure).",
+  "rules": {
+    "R-U1": "Probe seq s is sent at s * interval_ms after train start.",
+    "R-U2": "The first reply for a seq decides it: arrival - send <= window_ms means answered in window, otherwise late.",
+    "R-U3": "Every later reply for an already decided seq is a duplicate, whatever its timing.",
+    "R-U4": "An answered-in-window reply is out of order when its seq is lower than the highest seq among earlier-arrived answered-in-window replies.",
+    "R-U5": "A reply whose seq is outside 0..probes_sent-1 is ignored and counted only as ignored.",
+    "R-U6": "unanswered = probes_sent - answered_in_window. Late replies are reported separately and are not treated as lost.",
+    "R-U7": "answered_in_window = 0 yields FAILED_NO_RESPONSE, never a Succeeded result."
+  },
+  "fixtures": [
+    {
+      "id": "FIX-UDP-001",
+      "description": "Clean train: 8 probes, every reply in order and in window.",
+      "probes_sent": 8, "interval_ms": 100, "window_ms": 1000,
+      "replies": [
+        {"seq": 0, "arrival_ms": 40}, {"seq": 1, "arrival_ms": 140}, {"seq": 2, "arrival_ms": 240}, {"seq": 3, "arrival_ms": 340},
+        {"seq": 4, "arrival_ms": 440}, {"seq": 5, "arrival_ms": 540}, {"seq": 6, "arrival_ms": 640}, {"seq": 7, "arrival_ms": 740}
+      ],
+      "expected": {"result": "SUCCEEDED", "answered_in_window": 8, "late": 0, "duplicates": 0, "out_of_order": 0, "ignored": 0, "unanswered": 0}
+    },
+    {
+      "id": "FIX-UDP-002",
+      "description": "Missing sequence: seq 3 never answered.",
+      "probes_sent": 8, "interval_ms": 100, "window_ms": 1000,
+      "replies": [
+        {"seq": 0, "arrival_ms": 40}, {"seq": 1, "arrival_ms": 140}, {"seq": 2, "arrival_ms": 240},
+        {"seq": 4, "arrival_ms": 440}, {"seq": 5, "arrival_ms": 540}, {"seq": 6, "arrival_ms": 640}, {"seq": 7, "arrival_ms": 740}
+      ],
+      "expected": {"result": "SUCCEEDED", "answered_in_window": 7, "late": 0, "duplicates": 0, "out_of_order": 0, "ignored": 0, "unanswered": 1}
+    },
+    {
+      "id": "FIX-UDP-003",
+      "description": "Duplicate: seq 2 is answered twice.",
+      "probes_sent": 8, "interval_ms": 100, "window_ms": 1000,
+      "replies": [
+        {"seq": 0, "arrival_ms": 40}, {"seq": 1, "arrival_ms": 140}, {"seq": 2, "arrival_ms": 240}, {"seq": 2, "arrival_ms": 260},
+        {"seq": 3, "arrival_ms": 340}, {"seq": 4, "arrival_ms": 440}, {"seq": 5, "arrival_ms": 540}, {"seq": 6, "arrival_ms": 640}, {"seq": 7, "arrival_ms": 740}
+      ],
+      "expected": {"result": "SUCCEEDED", "answered_in_window": 8, "late": 0, "duplicates": 1, "out_of_order": 0, "ignored": 0, "unanswered": 0}
+    },
+    {
+      "id": "FIX-UDP-004",
+      "description": "Reordered: seq 1 (sent at 100) arrives after seq 2 (sent at 200).",
+      "probes_sent": 8, "interval_ms": 100, "window_ms": 1000,
+      "replies": [
+        {"seq": 0, "arrival_ms": 40}, {"seq": 2, "arrival_ms": 240}, {"seq": 1, "arrival_ms": 250}, {"seq": 3, "arrival_ms": 340},
+        {"seq": 4, "arrival_ms": 440}, {"seq": 5, "arrival_ms": 540}, {"seq": 6, "arrival_ms": 640}, {"seq": 7, "arrival_ms": 740}
+      ],
+      "expected": {"result": "SUCCEEDED", "answered_in_window": 8, "late": 0, "duplicates": 0, "out_of_order": 1, "ignored": 0, "unanswered": 0}
+    },
+    {
+      "id": "FIX-UDP-005",
+      "description": "Late reply: seq 5 (sent at 500) is answered at 2000, a delay of 1500 ms against a 1000 ms window. It is late, not lost, and not in window.",
+      "probes_sent": 8, "interval_ms": 100, "window_ms": 1000,
+      "replies": [
+        {"seq": 0, "arrival_ms": 40}, {"seq": 1, "arrival_ms": 140}, {"seq": 2, "arrival_ms": 240}, {"seq": 3, "arrival_ms": 340},
+        {"seq": 4, "arrival_ms": 440}, {"seq": 6, "arrival_ms": 640}, {"seq": 7, "arrival_ms": 740}, {"seq": 5, "arrival_ms": 2000}
+      ],
+      "expected": {"result": "SUCCEEDED", "answered_in_window": 7, "late": 1, "duplicates": 0, "out_of_order": 0, "ignored": 0, "unanswered": 1}
+    },
+    {
+      "id": "FIX-UDP-006",
+      "description": "No replies at all. Never expressed as 100 percent loss.",
+      "probes_sent": 8, "interval_ms": 100, "window_ms": 1000,
+      "replies": [],
+      "expected": {"result": "FAILED_NO_RESPONSE", "answered_in_window": 0, "late": 0, "duplicates": 0, "out_of_order": 0, "ignored": 0, "unanswered": 8}
+    },
+    {
+      "id": "FIX-UDP-007",
+      "description": "Unknown sequence: a reply carries seq 99, which was never sent. It is ignored and does not touch any counter.",
+      "probes_sent": 4, "interval_ms": 100, "window_ms": 1000,
+      "replies": [
+        {"seq": 0, "arrival_ms": 40}, {"seq": 99, "arrival_ms": 100}, {"seq": 1, "arrival_ms": 140}, {"seq": 2, "arrival_ms": 240}, {"seq": 3, "arrival_ms": 340}
+      ],
+      "expected": {"result": "SUCCEEDED", "answered_in_window": 4, "late": 0, "duplicates": 0, "out_of_order": 0, "ignored": 1, "unanswered": 0}
+    },
+    {
+      "id": "FIX-UDP-008",
+      "description": "All replies late. By the contract's literal rule (R-U7) this is a failure with zero answered in window. Whether an all-late train deserves its own outcome is an open question in the harness document.",
+      "probes_sent": 3, "interval_ms": 100, "window_ms": 500,
+      "replies": [{"seq": 0, "arrival_ms": 900}, {"seq": 1, "arrival_ms": 1000}, {"seq": 2, "arrival_ms": 1100}],
+      "expected": {"result": "FAILED_NO_RESPONSE", "answered_in_window": 0, "late": 3, "duplicates": 0, "out_of_order": 0, "ignored": 0, "unanswered": 3}
+    }
+  ]
+}
