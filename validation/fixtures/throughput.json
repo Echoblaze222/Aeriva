@@ -1,0 +1,44 @@
+{
+  "fixture_set": "throughput",
+  "fixture_format": "aeriva-fixture/1",
+  "synthetic": true,
+  "note": "SYNTHETIC TEST FIXTURES. Not real measurements. Rate is derived from bytes and duration and is never stored as a primary quantity.",
+  "semantics_ref": "PHASE_4_CROSS_CUTTING_TECHNICAL_DECISION_CONTRACT.md D4-7. Units: bits per second = bytes * 8 / (transfer_ms / 1000), decimal (1 kbit = 1000 bit).",
+  "proposed_test_parameters": {
+    "ramp_up_excluded_intervals": {"value": 1, "provenance": "PROPOSED_TEST_PARAMETER", "note": "Fixture-only illustration of excluding the first interval. Not a product threshold. Real values must come from pilots."}
+  },
+  "fixtures": [
+    {
+      "id": "FIX-THR-001",
+      "description": "Completed download: 1,000,000 bytes in 800 ms.",
+      "direction": "DOWNLOAD", "bytes_transferred": 1000000, "transfer_ms": 800, "byte_cap": 5000000, "termination": "COMPLETED",
+      "expected": {"result": "SUCCEEDED", "bits_per_second": 10000000.0}
+    },
+    {
+      "id": "FIX-THR-002",
+      "description": "Stopped at the byte cap: 250,000 bytes in 2000 ms with a 250,000 byte cap. A valid, explicitly labeled result.",
+      "direction": "DOWNLOAD", "bytes_transferred": 250000, "transfer_ms": 2000, "byte_cap": 250000, "termination": "STOPPED_AT_BYTE_CAP",
+      "expected": {"result": "SUCCEEDED", "bits_per_second": 1000000.0}
+    },
+    {
+      "id": "FIX-THR-003",
+      "description": "Slow network stopped at the time box: 12,500 bytes in 5000 ms. Truthful low value, not a failure.",
+      "direction": "UPLOAD", "bytes_transferred": 12500, "transfer_ms": 5000, "byte_cap": 5000000, "termination": "STOPPED_AT_TIME_BOX",
+      "expected": {"result": "SUCCEEDED", "bits_per_second": 20000.0}
+    },
+    {
+      "id": "FIX-THR-004",
+      "description": "Zero bytes by the time box: failure with a stage, never a rate of zero.",
+      "direction": "DOWNLOAD", "bytes_transferred": 0, "transfer_ms": 5000, "byte_cap": 5000000, "termination": "STOPPED_AT_TIME_BOX",
+      "expected": {"result": "FAILED", "failure": "Timeout", "stage": "RESPONSE"}
+    },
+    {
+      "id": "FIX-THR-005",
+      "description": "Interval samples with a TCP-style ramp: 100,000 then three intervals of 300,000 bytes, 200 ms each. Interval bytes must sum to the total.",
+      "direction": "DOWNLOAD", "bytes_transferred": 1000000, "transfer_ms": 800, "byte_cap": 5000000, "termination": "COMPLETED",
+      "interval_ms": 200,
+      "intervals": [{"start_ms": 0, "bytes": 100000}, {"start_ms": 200, "bytes": 300000}, {"start_ms": 400, "bytes": 300000}, {"start_ms": 600, "bytes": 300000}],
+      "expected": {"result": "SUCCEEDED", "bits_per_second": 10000000.0, "ramp_excluded_bits_per_second": 12000000.0}
+    }
+  ]
+}
