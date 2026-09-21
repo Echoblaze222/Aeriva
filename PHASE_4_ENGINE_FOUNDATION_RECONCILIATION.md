@@ -23,7 +23,7 @@ Author role: AI 2. Status: **plan only**. No production code changed, nothing me
 
 * Fresh clone, `git fetch --all`, tips verified at the start of this task (they moved since the earlier hardening report: foundation gained `3123132`, `89337fc`, `545a961`, `fdf5440`).
 * Trial merge: `git merge --no-commit --no-ff origin/phase-4-measurement-foundation` on a scratch branch at hardening `158f169`. Result: `Auto-merging` both shared files; `CONFLICT (content)` in `LatencyMeasurementEngine.kt` (1 hunk); the test file merged automatically. Scratch branch deleted; nothing pushed.
-* Conflict resolution was then *simulated by script* (keep hardening side; update the helper) and diffed against hardening's engine to obtain the exact delta in section 4.
+* Conflict resolution was then *simulated by script* (keep hardening side; update the helper) and diffed against hardening's engine to obtain the exact delta in section 3.
 * Call-site inventory: `git grep` over the **entire tracked tree** (134 files, all `*.kt`/`*.kts`/`*.java`/`*.md`, all source sets including `androidTest`, all modules including `app`) in the merged tree, then repeated against the trees of `phase-4-android-network-state`, `phase-4-test-gate` and `phase-4-android-platform-spec`. GitHub code search does not index this repository (also recorded in the foundation notes), so a full clone is the only complete method.
 * CI facts were read from CircleCI (`list_runs`, `list_workflow_jobs`, `list_job_tests`), not from branch notes.
 * Contract text quoted below is from `PHASE_4_CROSS_CUTTING_TECHNICAL_DECISION_CONTRACT.md` (`phase-4-cross-cutting-decisions`) and the gate wording from `PHASE_4_TEST_GATE_SPECIFICATION.md` (`phase-4-test-gate`).
@@ -125,7 +125,7 @@ Facts:
 
 * At `545a961` (CI run `0642d7ee`, succeeded) `captivePortalReported`, `vpnPresent`, `blockedByDevicePolicy` had **no defaults** and every constructor call site was explicit and green.
 * `fdf5440` then added `= false` to all three. Its stated reason (foundation notes addendum): the sandbox could not enumerate every call site, so defaults "remove the whole class of missed-call-site risk".
-* That premise no longer holds. Section 7 is a complete inventory: **6 constructor sites** in the whole repository, all explicit today, in every Phase 4 branch checked (test-gate, android-network-state, android-platform-spec: fixtures are byte-for-byte explicit).
+* That premise no longer holds. Section 7 is a complete inventory: **6 constructor sites** in the whole repository, all explicit today, in every Phase 4 branch checked (test-gate, android-network-state, android-platform-spec: fixtures are explicit).
 * Defaults make **"not observed" indistinguishable from "observed false"**. For `blockedByDevicePolicy` and `captivePortalReported` that value drives engine decisions (D5-2 decline on blocked; D5-5 two-signal captive-portal rule). A future production call site that forgets to compute them would silently report "not blocked, no portal, no VPN": a fabricated observation, the same defect class the hardening branch removes from the engine. Removing the defaults turns that omission into a compile error.
 * Recommendation: **restore the non-defaulted primary constructor** (revert the `NetworkState.kt` half of `fdf5440`; keep its documentation improvement where accurate). Keep `NetworkStateMapper.buildNetworkState(..., blocked: Boolean = false)`: that parameter is a function default for the offline/no-signal case, is what `phase-4-android-network-state` and test-gate row CX-05 already assume, and is not a data-class constructor default.
 * This is a change to a foundation-owned file: needs AI 1's agreement (DD-5). If declined, the fallback is to keep the defaults **and** add an architecture guard test (in the style of `ArchitectureGuardTest`) that fails if any production source under `src/main` constructs `NetworkState(` outside `NetworkStateMapper` / `NetworkState.unknown`, so the risk is bounded by a test rather than by a comment.
@@ -245,7 +245,13 @@ Persistence check: `NetworkStateHistoryEntity` stores `transport, available, val
 | `DerivedJitterStatsTest.kt:49` | `Timeout(Request)` | foundation |
 | `MeasurementFailureTaxonomyTest.kt:20, 45, 63` | stage-aware | foundation |
 
-Bare `Timeout` object references remaining after auto-merge: **exactly 1** (X2). On the foundation tree alone: 0. On the hardening tree alone: 2 (the engine helper and the engine KDoc-free construction site). The test-gate's own sweep ("zero bare unparameterized `Timeout` remaining") is true for foundation and false for the merged tree until X2 is applied.
+Bare `Timeout` object references (the form that breaks when `Timeout` gains a parameter), verified by re-running the search against each branch tree:
+
+* **Hardening tree alone: 4** -- the engine's `timeoutFailure()` helper, `LatencyMeasurementEngineTest.kt:168`, `ReferenceLatencyProbeExecutor.kt:74`, `ReferenceLatencyProbeExecutorTest.kt:88`.
+* **Foundation tree alone: 0** (the only other hit, `MeasurementFailureTaxonomyTest.kt:63`, is a constructor call followed by a cast).
+* **Merged tree after auto-merge: exactly 1** -- the engine helper. Foundation fixed the three test-tree sites; git cannot see that the helper needs the same fix because foundation never touched that hunk. That single reference is X2.
+
+The test-gate's own sweep ("zero bare unparameterized `Timeout` remaining") is true for foundation and false for the merged tree until X2 is applied.
 
 ### 7.3 Other inventoried items
 
@@ -277,7 +283,7 @@ JVM unit tests in the merged tree (`@Test` annotation count by grep, not a CI co
 | `FakeNetworkClientTest` | 5 | fixture; one test reshapes in stage 3 |
 | `DerivedLatencyStatsTest`, `FreshnessTest`, `ConfidenceTest` | 10, 5, 4 | Phase 3A |
 | `MeasurementCapabilityClassifierTest`, `TransportConstantMapperTest` | 11, 6 | classifier / mapper |
-| remaining `core:*` suites | 23 | untouched |
+| remaining `core:*` suites (`TestAerivaDispatchersTest` 1, `DataStoreAerivaPreferencesTest` 4, `AerivaResultTest` 5, `EncryptedPreferencesSecureStorageTest` 9) | 19 | untouched |
 
 ## 9. New tests required after reconciliation
 
