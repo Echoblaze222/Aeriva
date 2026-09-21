@@ -30,8 +30,12 @@ import java.time.Instant
  * being inferred from anything else. All three new fields are typed as
  * plain, non-nullable [Boolean] -- per Decision D4-8 they are reliably
  * observable from the platform's own capability and callback bits, so
- * there is no uncertain "cannot tell" state to represent for them, only
- * a value the mapper must actually compute rather than default.
+ * there is no uncertain "cannot tell" state to represent for them.
+ * [NetworkStateMapper] always computes a real value for each rather than
+ * relying on the `false` default below; the default exists only so
+ * existing constructor call sites elsewhere in the codebase that predate
+ * this change (for example fixture states in other modules' tests) keep
+ * compiling, not to license a new call site skipping a real value.
  */
 data class NetworkState(
     val transport: TransportType,
@@ -42,9 +46,9 @@ data class NetworkState(
     val estimatedQuality: NetworkQuality,
     val diagnosticsStatus: DiagnosticsStatus,
     val lastChangedAt: Instant,
-    val captivePortalReported: Boolean,
-    val vpnPresent: Boolean,
-    val blockedByDevicePolicy: Boolean
+    val captivePortalReported: Boolean = false,
+    val vpnPresent: Boolean = false,
+    val blockedByDevicePolicy: Boolean = false
 ) {
     companion object {
         /** State before the monitor has produced its first real reading. */

@@ -38,8 +38,9 @@ core:model (Android-free):
   defaulted `evidence: ProbeEvidence? = null` (Decision D4-1) -- additive,
   not breaking.
 - NetworkState.kt: gained captivePortalReported, vpnPresent,
-  blockedByDevicePolicy (Decision D4-8), computed, not defaulted, at both
-  real call sites.
+  blockedByDevicePolicy (Decision D4-8). See the addendum below --
+  these ended up defaulted to false after real CI caught a call site
+  this session missed, not left non-defaulted as first written.
 
 network:monitor:
 - NetworkStateMapper.kt: computes captivePortalReported (from the
@@ -53,8 +54,8 @@ network:monitor:
 - LatencyMeasurementEngine.kt, LatencyMeasurementEngineTest.kt,
   MeasurementBoundaryTest.kt: the one mechanical, fully-verified fix each
   needed for MeasurementFailure.Timeout's new stage parameter. Each site
-  was located by direct grep across the actual branch, not assumed --
-  three occurrences total, all updated the same way
+  was located by direct grep against the actual branch content, not
+  assumed -- three occurrences total, all updated the same way
   (MeasurementFailure.Timeout(MeasurementStage.Unknown), matching
   Decision D5-10's own text for the engine's outer backstop: "if it
   fires, yields Timeout(Unknown) and a defect log").
@@ -106,7 +107,11 @@ task asked for)
    next slice should do the NetworkClient/ProbeRequest migration and the
    OkHttpNetworkClient implementation together, as one reviewable,
    CI-verified change, exactly as Decision D5-11 and Section 10's slice
-   plan (S3, S4) already describe.
+   plan (S3, S4) already describe. The NetworkState call site this
+   session missed (see addendum below) is a concrete demonstration of
+   exactly this risk materializing even on the smaller, JVM-only slice
+   this change did attempt -- a further reason not to attempt the much
+   larger NetworkClient migration in the same pass.
 
 2. Real OkHttp version research WAS done and is recorded here for that
    next slice, so it does not have to repeat it: OkHttp 5.5.0's
@@ -183,3 +188,33 @@ and the engine's own probe call site -- together, so CI proves the whole
 seam compiles and the existing engine tests still pass in the same
 change that breaks their old shape, rather than in two separately-broken
 steps.
+
+
+ADDENDUM: CI FEEDBACK AND FIX (first real CI run)
+
+The first push (commit 9a28cc6) was checked against real CircleCI, not
+assumed green. Result: build, static_checks, and connected_android_test
+all succeeded (the module graph compiles and the instrumented suite
+passed); unit_tests failed with a genuine compile error this session
+had not caught: core/database/src/test/kotlin/com/aeriva/core/database/NetworkHistoryRepositoryTest.kt
+constructs a NetworkState(...) fixture that this change had not located
+-- core:database was not among the modules checked for NetworkState
+construction sites before adding its three new non-defaulted
+parameters.
+
+Fix: captivePortalReported, vpnPresent, and blockedByDevicePolicy on
+NetworkState now default to false, rather than requiring every call
+site to supply them explicitly. NetworkStateMapper's two real branches
+still compute genuine values and do not rely on the default -- only
+call sites elsewhere in the codebase that predate this change (test
+fixtures in other modules) benefit from it. This is a broader, safer
+fix than patching the one discovered call site, since GitHub's code
+search does not yet index this repository (returned zero results for
+a direct query) and this sandbox cannot reach Maven Central to run a
+real cross-module Gradle build to enumerate every call site with
+certainty; defaulting the fields removes the whole class of missed-call-
+site risk rather than relying on having found all of them by search.
+
+A second CircleCI run against the fixed commit should be checked before
+this branch is treated as done; see this task's own final report for
+that run's actual result.
