@@ -1,0 +1,21 @@
+{
+  "fixture_set": "freshness-confidence",
+  "fixture_format": "aeriva-fixture/1",
+  "synthetic": true,
+  "note": "SYNTHETIC TEST FIXTURES. Timestamps use year 2000 so they cannot be mistaken for real observations. The confidence thresholds are the illustrative ones in Confidence.of and are asserted here only because they are current repo behavior, not because they are validated.",
+  "semantics_ref": "Freshness.isStaleAt and Freshness.ageAt, Confidence.of at phase-3b-measurement-engine@727b2a91. A result is stale only when now is strictly after validUntil. A null validUntil is never stale.",
+  "freshness": [
+    {"id": "FIX-FRESH-001", "produced_at": "2000-01-01T00:00:00Z", "valid_until": "2000-01-01T00:01:00Z", "now": "2000-01-01T00:00:59Z", "expected": {"stale": false, "age_ms": 59000}},
+    {"id": "FIX-FRESH-002", "produced_at": "2000-01-01T00:00:00Z", "valid_until": "2000-01-01T00:01:00Z", "now": "2000-01-01T00:01:00Z", "expected": {"stale": false, "age_ms": 60000}},
+    {"id": "FIX-FRESH-003", "produced_at": "2000-01-01T00:00:00Z", "valid_until": "2000-01-01T00:01:00Z", "now": "2000-01-01T00:01:00.001Z", "expected": {"stale": true, "age_ms": 60001}},
+    {"id": "FIX-FRESH-004", "produced_at": "2000-01-01T00:00:00Z", "valid_until": null, "now": "2000-01-02T00:00:00Z", "expected": {"stale": false, "age_ms": 86400000}}
+  ],
+  "latency_confidence": [
+    {"id": "FIX-CONF-001", "sample_count": 1, "consistent": true, "expected": "Insufficient"},
+    {"id": "FIX-CONF-002", "sample_count": 2, "consistent": true, "expected": "Insufficient"},
+    {"id": "FIX-CONF-003", "sample_count": 3, "consistent": false, "expected": "Low"},
+    {"id": "FIX-CONF-004", "sample_count": 9, "consistent": true, "expected": "Low"},
+    {"id": "FIX-CONF-005", "sample_count": 10, "consistent": false, "expected": "Medium"},
+    {"id": "FIX-CONF-006", "sample_count": 10, "consistent": true, "expected": "High"}
+  ]
+}
