@@ -9,6 +9,7 @@ import com.aeriva.core.model.measurement.Freshness
 import com.aeriva.core.model.measurement.LatencyMeasurement
 import com.aeriva.core.model.measurement.MeasurementFailure
 import com.aeriva.core.model.measurement.MeasurementNetworkContext
+import com.aeriva.core.model.measurement.MeasurementStage
 import java.time.Instant
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -55,7 +56,10 @@ class ReferenceLatencyProbeExecutorTest {
             capabilities = emptySet(),
             estimatedQuality = NetworkQuality.Unavailable,
             diagnosticsStatus = DiagnosticsStatus.NotAvailable,
-            lastChangedAt = Instant.EPOCH
+            lastChangedAt = Instant.EPOCH,
+            captivePortalReported = false,
+            vpnPresent = false,
+            blockedByDevicePolicy = false
         )
     )
 
@@ -85,7 +89,7 @@ class ReferenceLatencyProbeExecutorTest {
 
         val failed = result as? LatencyMeasurement.Failed
         requireNotNull(failed) { "expected Failed, got $result" }
-        assertEquals(MeasurementFailure.Timeout, failed.failure)
+        assertEquals(MeasurementFailure.Timeout(MeasurementStage.Unknown), failed.failure)
         assertEquals(1, client.cancelledCallCount)
         assertEquals(0, client.completedCallCount)
     }

@@ -4,6 +4,7 @@ import com.aeriva.core.common.AerivaDispatchers
 import com.aeriva.core.model.measurement.LatencyMeasurement
 import com.aeriva.core.model.measurement.MeasurementFailure
 import com.aeriva.core.model.measurement.MeasurementNetworkContext
+import com.aeriva.core.model.measurement.MeasurementStage
 import java.time.Duration
 import java.time.Instant
 import kotlinx.coroutines.TimeoutCancellationException
@@ -71,7 +72,7 @@ class ReferenceLatencyProbeExecutor(
                 }
             }
         } catch (timeout: TimeoutCancellationException) {
-            LatencyMeasurement.Failed(id, context, startedAt, method, MeasurementFailure.Timeout)
+            LatencyMeasurement.Failed(id, context, startedAt, method, MeasurementFailure.Timeout(MeasurementStage.Unknown))
         }
     }
 
