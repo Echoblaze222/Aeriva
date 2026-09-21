@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aeriva:validation:evidence-record:1",
+  "title": "AERIVA measurement validation evidence record (layers L2 to L7)",
+  "description": "One record per executed or planned validation test. Unknown properties are rejected on purpose: the schema is also the privacy control (no SSID, BSSID, IMEI, phone number, location, account or message fields exist). Values named after AERIVA domain types are serializations for evidence, not a second domain model; canonical definitions live in the Phase 4 cross-cutting decision contract and core:model.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "synthetic", "test_id", "test_case_ref", "layer",
+    "execution", "build", "device", "network", "condition", "endpoint",
+    "measurement", "expected", "observed", "verdict", "logs", "limitations"
+  ],
+  "properties": {
+    "schema_version": { "const": "aeriva-evidence/1" },
+    "synthetic": { "type": "boolean", "description": "true for fixtures and documentation examples. Synthetic records are never evidence of real behavior." },
+    "test_id": { "type": "string", "pattern": "^[A-Z0-9][A-Z0-9-]{2,63}$" },
+    "test_case_ref": { "type": "string", "pattern": "^(NC|DM|MV)-[A-Z0-9-]{1,32}$", "description": "Reference to a scenario in PHASE_5_MEASUREMENT_VALIDATION_HARNESS.md (NC), PHASE_5_DEVICE_TEST_MATRIX.md (DM) or a measurement check (MV)." },
+    "layer": { "enum": ["L2", "L3", "L4", "L5", "L6", "L7"] },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executed", "runner_role"],
+      "properties": {
+        "executed": { "type": "boolean" },
+        "runner_role": { "enum": ["HUMAN", "SCRIPT", "CI", "NONE"] },
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": "string", "format": "date-time" },
+        "run_ref": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$", "description": "Opaque run or CI reference. Not a person name." }
+      },
+      "if": { "properties": { "executed": { "const": true } } },
+      "then": { "required": ["started_at", "ended_at"] }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["git_commit", "branch", "build_type", "dirty_tree"],
+      "properties": {
+        "git_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "branch": { "type": "string", "maxLength": 128 },
+        "build_type": { "enum": ["debug", "release", "none"] },
+        "app_version_name": { "type": "string", "maxLength": 32 },
+        "dirty_tree": { "type": "boolean" }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["is_emulator", "device_ref", "manufacturer", "model", "android_api", "device_class"],
+      "properties": {
+        "is_emulator": { "type": "boolean" },
+        "device_ref": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$", "description": "Lab inventory label. Never a serial number, IMEI or account." },
+        "manufacturer": { "type": "string", "maxLength": 64 },
+        "model": { "type": "string", "maxLength": 64 },
+        "android_api": { "type": "integer", "minimum": 26, "maximum": 40 },
+        "android_release": { "type": "string", "maxLength": 16 },
+        "device_class": { "enum": ["LOW", "MID", "HIGH", "EMULATOR", "UNKNOWN"] },
+        "oem_skin": { "type": "string", "maxLength": 64 },
+        "build_fingerprint": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transport", "validated", "metered", "private_dns_mode", "ip_family"],
+      "properties": {
+        "transport": { "enum": ["WIFI", "CELLULAR", "ETHERNET", "VPN", "OTHER", "NONE"] },
+        "underlying_transport": { "enum": ["WIFI", "CELLULAR", "ETHERNET", "OTHER", "NONE", "UNKNOWN", null] },
+        "validated": { "type": ["boolean", "null"] },
+        "captive_portal_reported": { "type": ["boolean", "null"] },
+        "metered": { "type": ["boolean", "null"] },
+        "vpn_present": { "type": ["boolean", "null"] },
+        "blocked_by_policy": { "type": ["boolean", "null"] },
+        "private_dns_mode": { "enum": ["OFF", "OPPORTUNISTIC", "STRICT", "UNKNOWN"] },
+        "ip_family": { "enum": ["IPV4", "IPV6", "DUAL", "UNKNOWN"] },
+        "carrier_label": { "type": ["string", "null"], "maxLength": 32, "description": "Carrier or pseudonym label only. No ICCID, IMSI, phone number." },
+        "wifi_band": { "enum": ["2_4_GHZ", "5_GHZ", "6_GHZ", "UNKNOWN", "NOT_APPLICABLE"] },
+        "ap_ref": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{1,64}$", "description": "Lab access point label. Never an SSID or BSSID." }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenario_id", "impairment"],
+      "properties": {
+        "scenario_id": { "enum": ["NC-A", "NC-B", "NC-C", "NC-D", "NC-E", "NC-F", "NC-G", "NC-H", "NC-I", "NC-J", "NC-K", "NC-L", "NC-M"] },
+        "impairment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tool"],
+          "properties": {
+            "tool": { "enum": ["NONE", "TC_NETEM", "EMULATOR_CONSOLE", "EMULATOR_STARTUP_OPTIONS", "REAL_NETWORK", "OTHER"] },
+            "added_delay_ms": { "type": ["number", "null"], "minimum": 0 },
+            "added_jitter_ms": { "type": ["number", "null"], "minimum": 0 },
+            "loss_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+            "rate_limit_kbps": { "type": ["number", "null"], "minimum": 0 },
+            "notes": { "type": "string", "maxLength": 200 }
+          }
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role"],
+      "properties": {
+        "role": { "enum": ["LFS", "CRS", "NONE"], "description": "PME is intentionally absent. It may be added by a schema revision only after the owner approves production enablement (contract OD-2, OD-3)." },
+        "endpoint_ref": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{1,64}$", "description": "Lab label. No dots, colons or slashes, so hostnames and URLs cannot be stored." }
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "outcome_kind", "samples"],
+      "properties": {
+        "capability": { "enum": ["LATENCY", "JITTER", "PACKET_LOSS", "THROUGHPUT", "DNS_RESPONSIVENESS", "HTTPS_REACHABILITY", "NETWORK_STABILITY", "NETWORK_TRANSITIONS", "WIFI_CHARACTERISTICS", "CELLULAR_CHARACTERISTICS"] },
+        "method_id": { "type": ["string", "null"], "pattern": "^[a-z0-9-]{1,48}$" },
+        "outcome_kind": { "enum": ["MEASURED_SUCCEEDED", "MEASURED_FAILED", "DECLINED_CAPABILITY_UNAVAILABLE", "DECLINED_NO_NETWORK", "DECLINED_NO_ENDPOINT", "DECLINED_BLOCKED", "CANCELLED_NO_RESULT", "NOT_ATTEMPTED"] },
+        "failure": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type"],
+              "properties": {
+                "type": { "enum": ["Timeout", "Cancelled", "DnsFailure", "EndpointFailure", "TlsFailure", "UnexpectedRedirect", "InvalidResponse", "CaptivePortalSuspected", "NoResponseFromEndpoint", "BlockedByDevicePolicy", "NetworkChangedDuringMeasurement", "Unclassified"] },
+                "stage": { "enum": ["PRE_FLIGHT", "DNS", "CONNECT", "TLS", "REQUEST", "RESPONSE", "UNKNOWN", null] },
+                "kind": { "type": ["string", "null"], "maxLength": 32 }
+              }
+            }
+          ]
+        },
+        "samples": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sequence_index", "ok"],
+            "properties": {
+              "sequence_index": { "type": "integer", "minimum": 0 },
+              "ok": { "type": "boolean" },
+              "value_ms": { "type": ["number", "null"], "minimum": 0 },
+              "failure_type": { "type": ["string", "null"], "maxLength": 48 },
+              "connection_state": { "enum": ["WARM", "COLD", "NOT_APPLICABLE"] }
+            }
+          }
+        },
+        "derived": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "average_ms": { "type": "number", "minimum": 0 },
+                "min_ms": { "type": "number", "minimum": 0 },
+                "max_ms": { "type": "number", "minimum": 0 },
+                "mean_abs_ipdv_ms": { "type": "number", "minimum": 0 },
+                "pdv_range_ms": { "type": "number", "minimum": 0 },
+                "sample_count": { "type": "integer", "minimum": 0 },
+                "pair_count": { "type": "integer", "minimum": 0 },
+                "probes_sent": { "type": "integer", "minimum": 0 },
+                "unanswered_count": { "type": "integer", "minimum": 0 },
+                "bytes_transferred": { "type": "integer", "minimum": 0 },
+                "transfer_ms": { "type": "number", "minimum": 0 },
+                "confidence": { "enum": ["Insufficient", "Low", "Medium", "High"] }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status_label", "classification", "pass_criteria"],
+      "properties": {
+        "status_label": { "enum": ["EXPECTED", "NOT_YET_TESTED", "REQUIRES_PHYSICAL_DEVICE", "NOT_REPRESENTABLE_IN_EMULATOR"] },
+        "classification": { "type": "string", "maxLength": 96 },
+        "pass_criteria": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "maxLength": 300 } },
+        "tolerances": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value", "unit", "provenance"],
+            "properties": {
+              "name": { "type": "string", "maxLength": 64 },
+              "value": { "type": "number" },
+              "unit": { "type": "string", "maxLength": 16 },
+              "provenance": { "enum": ["PROPOSED_TEST_PARAMETER", "FIXTURE_EXACT", "DERIVED_FROM_PILOT", "OWNER_DECISION"] }
+            }
+          }
+        }
+      }
+    },
+    "observed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary"],
+      "properties": {
+        "classification": { "type": ["string", "null"], "maxLength": 96 },
+        "summary": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result", "reason", "investigation_branch"],
+      "properties": {
+        "result": { "enum": ["PASS", "FAIL", "INCONCLUSIVE", "BLOCKED", "NOT_RUN"] },
+        "reason": { "type": "string", "maxLength": 500 },
+        "investigation_branch": { "enum": ["NOT_APPLICABLE", "COMPILE", "UNIT", "INSTRUMENTATION", "CONNECTIVITY", "PERMISSION", "OEM_BEHAVIOR", "MEASUREMENT_IMPLEMENTATION", "ENVIRONMENT", "UNDETERMINED"] }
+      }
+    },
+    "logs": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "ref", "sha256", "redaction_reviewed", "contains_bugreport"],
+        "properties": {
+          "kind": { "enum": ["LOGCAT_FILTERED", "DUMPSYS_CONNECTIVITY_EXCERPT", "DUMPSYS_BATTERY", "DUMPSYS_DEVICEIDLE", "TRAFFICSTATS_SNAPSHOT", "PCAP", "SERVER_LOG", "INSTRUMENTATION_XML", "OTHER"] },
+          "ref": { "type": "string", "pattern": "^[A-Za-z0-9_./-]{1,200}$", "not": { "pattern": "(^/|\\.\\.|://)" } },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "redaction_reviewed": { "type": "boolean" },
+          "contains_bugreport": { "const": false, "description": "Raw bug reports contain logs from all apps and are prohibited as evidence attachments." }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "site_label": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$", "description": "Coarse lab or site label. Never coordinates or an address." },
+        "temperature_c": { "type": ["number", "null"] },
+        "battery_percent_start": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+        "charging": { "type": ["boolean", "null"] },
+        "screen_state": { "enum": ["ON", "OFF", "UNKNOWN"] },
+        "time_bucket": { "enum": ["MORNING", "AFTERNOON", "EVENING", "NIGHT", "UNKNOWN"] }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "enum": ["EMULATOR_ONLY", "SHARED_ACCESS_POINT", "NO_WIRE_CAPTURE", "NO_REFERENCE_SERVER", "SINGLE_DEVICE", "UNCONTROLLED_CARRIER_LOAD", "OEM_UNKNOWN", "SIMULATED_IMPAIRMENT", "OTHER"] }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "synthetic": { "const": true } }, "required": ["synthetic"] },
+      "then": { "properties": { "test_id": { "pattern": "^FIXTURE-" } } },
+      "else": { "properties": { "test_id": { "not": { "pattern": "^FIXTURE-" } } } }
+    },
+    {
+      "if": { "properties": { "verdict": { "properties": { "result": { "enum": ["PASS", "FAIL", "INCONCLUSIVE"] } } } }, "required": ["verdict"] },
+      "then": { "properties": { "execution": { "properties": { "executed": { "const": true } } } } }
+    },
+    {
+      "if": { "properties": { "verdict": { "properties": { "result": { "enum": ["NOT_RUN", "BLOCKED"] } } } }, "required": ["verdict"] },
+      "then": { "properties": { "execution": { "properties": { "executed": { "const": false } } } } }
+    },
+    {
+      "if": { "properties": { "device": { "properties": { "is_emulator": { "const": true } } } }, "required": ["device"] },
+      "then": { "properties": { "layer": { "enum": ["L2", "L3"] }, "device": { "properties": { "device_class": { "const": "EMULATOR" } } } } },
+      "else": { "properties": { "device": { "properties": { "device_class": { "not": { "const": "EMULATOR" } } } } } }
+    },
+    {
+      "if": { "properties": { "layer": { "enum": ["L4", "L5", "L6", "L7"] } }, "required": ["layer"] },
+      "then": { "properties": { "device": { "properties": { "is_emulator": { "const": false } } } } }
+    },
+    {
+      "if": { "properties": { "measurement": { "properties": { "outcome_kind": { "const": "CANCELLED_NO_RESULT" } } } }, "required": ["measurement"] },
+      "then": { "properties": { "measurement": { "properties": { "samples": { "maxItems": 0 }, "derived": { "type": "null" }, "failure": { "type": "null" } } } } }
+    },
+    {
+      "if": { "properties": { "measurement": { "properties": { "outcome_kind": { "enum": ["DECLINED_CAPABILITY_UNAVAILABLE", "DECLINED_NO_NETWORK", "DECLINED_NO_ENDPOINT", "DECLINED_BLOCKED", "NOT_ATTEMPTED"] } } } }, "required": ["measurement"] },
+      "then": { "properties": { "measurement": { "properties": { "samples": { "maxItems": 0 }, "derived": { "type": "null" }, "failure": { "type": "null" } } } } }
+    },
+    {
+      "if": { "properties": { "measurement": { "properties": { "outcome_kind": { "const": "MEASURED_FAILED" } } } }, "required": ["measurement"] },
+      "then": { "properties": { "measurement": { "required": ["failure"], "properties": { "failure": { "type": "object" } } } } }
+    }
+  ]
+}
