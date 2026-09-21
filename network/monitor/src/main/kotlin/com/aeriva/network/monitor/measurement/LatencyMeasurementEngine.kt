@@ -10,8 +10,10 @@ import com.aeriva.network.monitor.MeasurementCapability
 import com.aeriva.network.monitor.MeasurementCapabilityClassifier
 import java.time.Instant
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The production Phase 3B measurement engine for the LATENCY capability
@@ -84,27 +86,46 @@ import kotlinx.coroutines.withTimeout
  * the real elapsed time was normal, and a latency number is exactly
  * the kind of value where that silent corruption would be worst --
  * `System.nanoTime()` cannot be affected by wall-clock adjustments and
- * is the standard JDK/Android-safe choice for measuring elapsed time.
- * It is isolated behind a plain injectable `() -> Long` seam, following
- * this codebase's existing clock-seam convention exactly (no new
- * interface), so it remains fakeable in a JVM test without
- * instrumentation, same as [now].
+ * is monotonic. It is isolated behind a plain injectable `() -> Long`
+ * seam, following this codebase's existing clock-seam convention
+ * exactly (no new interface), so it remains fakeable in a JVM test
+ * without instrumentation, same as [now].
+ *
+ * Phase 4 hardening: the start reading is taken INSIDE the io context,
+ * immediately before [NetworkClient.probe], so time spent waiting for
+ * the io dispatcher is never counted as network latency (both Phase 4
+ * design documents flagged the earlier before-the-hop placement). A
+ * reading that runs backwards is a broken seam, not a measurement: it
+ * fails loudly with [IllegalStateException] instead of yielding a
+ * negative `valueMillis`. Known limit, deliberately not changed here:
+ * per Android's `SystemClock` documentation `System.nanoTime()` shares
+ * the uptime clock, which does not tick during deep sleep, whereas
+ * `SystemClock.elapsedRealtimeNanos()` does. A probe bounded by
+ * [timeoutMillis] spanning device sleep is an edge case; a caller that
+ * cares can inject `SystemClock::elapsedRealtimeNanos` at the Android
+ * edge through [elapsedNanos].
  *
  * ## Cancellation (per this phase's explicit requirement)
- * A [kotlinx.coroutines.CancellationException] that is NOT a
- * [TimeoutCancellationException] (i.e. real caller-initiated
- * cancellation, not this engine's own timeout) is never caught here --
- * it propagates unchanged, and [measure] never returns a value for a
- * cancelled attempt. [MeasurementFailure.Cancelled] exists in the
+ * Only this engine's OWN deadline becomes a value: it is enforced with
+ * `withTimeoutOrNull`, which (per its documentation and implementation)
+ * only swallows the timeout it created. Any other cancellation --
+ * including a [TimeoutCancellationException] raised by the CALLER's own
+ * `withTimeout` around [measure]/[measureSeries] -- propagates
+ * unchanged, and [measure] never returns a value for a cancelled
+ * attempt (it checks for cancellation on entry, so this holds on the
+ * decline paths too). The one [TimeoutCancellationException] that is
+ * still caught is a timeout thrown by the [NetworkClient] itself while
+ * the caller is still active; that is a genuine timeout and is reported
+ * as [MeasurementFailure.Timeout] rather than escaping as a silent
+ * cancellation. [MeasurementFailure.Cancelled] exists in the
  * domain model (Phase 3A) for a caller/orchestrator layer above this
  * engine to record "the user cancelled this attempt" as history if it
  * chooses to -- this engine itself never constructs that case, per this
  * phase's explicit instruction not to convert cancellation into an
- * ordinary measurement failure. [ReferenceLatencyProbeExecutorTest]'s
- * `measure_onCallerCancellation_propagates_andEmitsNoResult` already
- * proves this exact shape works under `runTest`; this engine follows
- * the identical catch shape (only [TimeoutCancellationException]) for
- * the same reason.
+ * ordinary measurement failure.
+ * [ReferenceLatencyProbeExecutorTest]'s
+ * `measure_onCallerCancellation_propagates_andEmitsNoResult` and this
+ * engine's own tests prove the propagation under `runTest`.
  */
 class LatencyMeasurementEngine(
     private val dispatchers: AerivaDispatchers,
@@ -116,6 +137,13 @@ class LatencyMeasurementEngine(
     private val timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS
 ) {
 
+    init {
+        // withTimeoutOrNull treats a non-positive timeout as "already
+        // expired": every call would silently return Timeout without
+        // probing. That is a misconfiguration, so fail at construction.
+        require(timeoutMillis > 0) { "timeoutMillis must be positive, was $timeoutMillis" }
+    }
+
     /**
      * Executes exactly one latency probe for [request], or declines
      * without attempting one. Never throws for any outcome this phase's
@@ -123,6 +151,11 @@ class LatencyMeasurementEngine(
      * KDoc), which is not an outcome this function returns a value for.
      */
     suspend fun measure(request: LatencyMeasurementRequest): LatencyMeasurementOutcome {
+        // A cancelled caller never receives a value, including the
+        // synchronous decline outcomes below (which contain no
+        // suspension point of their own).
+        currentCoroutineContext().ensureActive()
+
         val classification = classify(
             MeasurementCapability.LATENCY,
             request.sdkInt,
@@ -142,18 +175,26 @@ class LatencyMeasurementEngine(
         }
 
         val startedAt = now()
-        val startNanos = elapsedNanos()
 
         val measurement: LatencyMeasurement = try {
             withContext(dispatchers.io) {
-                withTimeout(timeoutMillis) {
+                withTimeoutOrNull(timeoutMillis) {
+                    // Monotonic start reading: inside the io context and
+                    // immediately before the probe, so dispatcher
+                    // queueing is not counted as network latency.
+                    val startNanos = elapsedNanos()
                     toMeasurement(request, startedAt, startNanos, networkClient.probe(request.target))
                 }
-            }
-        } catch (timeout: TimeoutCancellationException) {
-            LatencyMeasurement.Failed(
-                request.id, request.context, startedAt, request.method, MeasurementFailure.Timeout
-            )
+            } ?: timeoutFailure(request, startedAt)
+        } catch (foreign: TimeoutCancellationException) {
+            // withTimeoutOrNull already consumed this engine's own
+            // deadline, so this is somebody else's timeout. If the caller
+            // itself was cancelled (its own withTimeout fired), rethrow
+            // that cancellation; otherwise the NetworkClient raised its
+            // own timeout, which is a real Timeout, not a silent
+            // cancellation.
+            currentCoroutineContext().ensureActive()
+            timeoutFailure(request, startedAt)
         }
 
         return LatencyMeasurementOutcome.Measured(measurement)
@@ -175,10 +216,15 @@ class LatencyMeasurementEngine(
      * for the identical underlying pattern) -- this function does not
      * need to duplicate that capability to remain correct, only to
      * remain simple, per this phase's own minimalism instruction.
+     *
+     * [calculatedAt], when not supplied, is read AFTER the samples have
+     * run: a derived value calculated from these samples cannot predate
+     * them (reading the clock as a default argument evaluated it before
+     * the first probe).
      */
     suspend fun measureSeries(
         requests: List<LatencyMeasurementRequest>,
-        calculatedAt: Instant = now()
+        calculatedAt: Instant? = null
     ): LatencyAggregationOutcome {
         val outcomes = requests.map { measure(it) }
         val succeeded = outcomes
@@ -186,13 +232,21 @@ class LatencyMeasurementEngine(
             .map { it.measurement }
             .filterIsInstance<LatencyMeasurement.Succeeded>()
 
-        val stats = DerivedLatencyStats.from(succeeded, calculatedAt)
+        val stats = DerivedLatencyStats.from(succeeded, calculatedAt ?: now())
         return if (stats == null) {
             LatencyAggregationOutcome.InsufficientEvidence(outcomes)
         } else {
             LatencyAggregationOutcome.Aggregated(stats, outcomes)
         }
     }
+
+    private fun timeoutFailure(
+        request: LatencyMeasurementRequest,
+        startedAt: Instant
+    ): LatencyMeasurement.Failed = LatencyMeasurement.Failed(
+        request.id, request.context, startedAt, request.method,
+        MeasurementFailure.Timeout
+    )
 
     private fun toMeasurement(
         request: LatencyMeasurementRequest,
@@ -241,7 +295,11 @@ class LatencyMeasurementEngine(
             )
         }
 
-        val elapsedMillis = (elapsedNanos() - startNanos) / NANOS_PER_MILLI
+        val elapsedNanosTotal = elapsedNanos() - startNanos
+        check(elapsedNanosTotal >= 0) {
+            "elapsedNanos ran backwards during a probe ($elapsedNanosTotal ns); refusing to report a negative latency"
+        }
+        val elapsedMillis = elapsedNanosTotal / NANOS_PER_MILLI
         return LatencyMeasurement.Succeeded(
             id = request.id,
             context = request.context,
