@@ -28,7 +28,10 @@ class NetworkHistoryRepositoryTest {
         capabilities = emptySet(),
         estimatedQuality = NetworkQuality.Unavailable,
         diagnosticsStatus = DiagnosticsStatus.NotAvailable,
-        lastChangedAt = recordedAt
+        lastChangedAt = recordedAt,
+        captivePortalReported = false,
+        vpnPresent = false,
+        blockedByDevicePolicy = false
     )
 
     private fun repository(dao: FakeNetworkStateHistoryDao = FakeNetworkStateHistoryDao()) =
