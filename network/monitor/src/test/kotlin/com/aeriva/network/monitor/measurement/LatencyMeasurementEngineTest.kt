@@ -49,7 +49,10 @@ class LatencyMeasurementEngineTest {
             capabilities = emptySet(),
             estimatedQuality = NetworkQuality.Unavailable,
             diagnosticsStatus = DiagnosticsStatus.NotAvailable,
-            lastChangedAt = Instant.EPOCH
+            lastChangedAt = Instant.EPOCH,
+            captivePortalReported = false,
+            vpnPresent = false,
+            blockedByDevicePolicy = false
         )
     )
 
