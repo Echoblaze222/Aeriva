@@ -1,0 +1,156 @@
+{
+  "fixture_set": "latency-series",
+  "fixture_format": "aeriva-fixture/1",
+  "synthetic": true,
+  "note": "SYNTHETIC TEST FIXTURES. Not real measurements. Values are chosen so the arithmetic can be checked by hand.",
+  "semantics_ref": "Latency: DerivedLatencyStats.from and Confidence.of at phase-3b-measurement-engine@727b2a91. Jitter: PHASE_4_CROSS_CUTTING_TECHNICAL_DECISION_CONTRACT.md D4-3 (pairs of adjacent successful, same-method, warm, same-network samples; samples used = members of at least one valid pair).",
+  "sample_format": {
+    "t": "send time offset in ms from series start (must be non-decreasing, otherwise the series is unordered evidence)",
+    "v": "latency in ms (present when the sample succeeded)",
+    "fail": "failure label (present when the sample failed)",
+    "cold": "true for a cold-connection sample (default false, meaning warm)",
+    "net": "opaque network handle (default 1)",
+    "method": "method id (default https-h1-warm-exchange)"
+  },
+  "fixtures": [
+    {
+      "id": "FIX-LAT-001",
+      "description": "Healthy ascending: 10, 20, 30, 40 ms.",
+      "samples": [{"t": 0, "v": 10}, {"t": 100, "v": 20}, {"t": 200, "v": 30}, {"t": 300, "v": 40}],
+      "expected": {
+        "latency": {"result": "AGGREGATED", "valid_count": 4, "average": 25.0, "min": 10.0, "max": 40.0, "confidence": "Low"},
+        "jitter": {"result": "DERIVED", "pair_count": 3, "sample_count": 4, "mean_abs_ipdv": 10.0, "pdv_range": 30.0}
+      }
+    },
+    {
+      "id": "FIX-LAT-002",
+      "description": "Variable: 10, 100, 15, 200 ms.",
+      "samples": [{"t": 0, "v": 10}, {"t": 100, "v": 100}, {"t": 200, "v": 15}, {"t": 300, "v": 200}],
+      "expected": {
+        "latency": {"result": "AGGREGATED", "valid_count": 4, "average": 81.25, "min": 10.0, "max": 200.0, "confidence": "Low"},
+        "jitter": {"result": "DERIVED", "pair_count": 3, "sample_count": 4, "mean_abs_ipdv": 120.0, "pdv_range": 190.0}
+      }
+    },
+    {
+      "id": "FIX-LAT-003",
+      "description": "Ten stable samples alternating 20 and 21 ms. Consistent, so the illustrative latency confidence is High.",
+      "samples": [
+        {"t": 0, "v": 20}, {"t": 100, "v": 21}, {"t": 200, "v": 20}, {"t": 300, "v": 21}, {"t": 400, "v": 20},
+        {"t": 500, "v": 21}, {"t": 600, "v": 20}, {"t": 700, "v": 21}, {"t": 800, "v": 20}, {"t": 900, "v": 21}
+      ],
+      "expected": {
+        "latency": {"result": "AGGREGATED", "valid_count": 10, "average": 20.5, "min": 20.0, "max": 21.0, "confidence": "High"},
+        "jitter": {"result": "DERIVED", "pair_count": 9, "sample_count": 10, "mean_abs_ipdv": 1.0, "pdv_range": 1.0}
+      }
+    },
+    {
+      "id": "FIX-LAT-004",
+      "description": "Ten wide samples alternating 10 and 110 ms. Spread 100 exceeds half the 60 ms average, so the illustrative latency confidence is Medium.",
+      "samples": [
+        {"t": 0, "v": 10}, {"t": 100, "v": 110}, {"t": 200, "v": 10}, {"t": 300, "v": 110}, {"t": 400, "v": 10},
+        {"t": 500, "v": 110}, {"t": 600, "v": 10}, {"t": 700, "v": 110}, {"t": 800, "v": 10}, {"t": 900, "v": 110}
+      ],
+      "expected": {
+        "latency": {"result": "AGGREGATED", "valid_count": 10, "average": 60.0, "min": 10.0, "max": 110.0, "confidence": "Medium"},
+        "jitter": {"result": "DERIVED", "pair_count": 9, "sample_count": 10, "mean_abs_ipdv": 100.0, "pdv_range": 100.0}
+      }
+    },
+    {
+      "id": "FIX-LAT-005",
+      "description": "Single sample. Latency aggregates with Insufficient confidence. No pair exists, so jitter is null.",
+      "samples": [{"t": 0, "v": 20}],
+      "expected": {
+        "latency": {"result": "AGGREGATED", "valid_count": 1, "average": 20.0, "min": 20.0, "max": 20.0, "confidence": "Insufficient"},
+        "jitter": {"result": "NULL"}
+      }
+    },
+    {
+      "id": "FIX-LAT-006",
+      "description": "Two samples. Latency confidence Insufficient (fewer than 3). One pair exists.",
+      "samples": [{"t": 0, "v": 20}, {"t": 100, "v": 30}],
+      "expected": {
+        "latency": {"result": "AGGREGATED", "valid_count": 2, "average": 25.0, "min": 20.0, "max": 30.0, "confidence": "Insufficient"},
+        "jitter": {"result": "DERIVED", "pair_count": 1, "sample_count": 2, "mean_abs_ipdv": 10.0, "pdv_range": 10.0}
+      }
+    },
+    {
+      "id": "FIX-LAT-007",
+      "description": "Timeout sequence: every sample fails. No latency aggregate exists (insufficient evidence) and jitter is null. A timeout must never be averaged as a value.",
+      "samples": [
+        {"t": 0, "fail": "Timeout(RESPONSE)"}, {"t": 100, "fail": "Timeout(RESPONSE)"},
+        {"t": 200, "fail": "Timeout(RESPONSE)"}, {"t": 300, "fail": "Timeout(RESPONSE)"}
+      ],
+      "expected": {
+        "latency": {"result": "INSUFFICIENT_EVIDENCE"},
+        "jitter": {"result": "NULL"}
+      }
+    },
+    {
+      "id": "FIX-LAT-008",
+      "description": "Timeout then recovery: fail, 20, 22, 21 ms. The failure contributes nothing and starts no pair.",
+      "samples": [{"t": 0, "fail": "Timeout(RESPONSE)"}, {"t": 100, "v": 20}, {"t": 200, "v": 22}, {"t": 300, "v": 21}],
+      "expected": {
+        "latency": {"result": "AGGREGATED", "valid_count": 3, "average": 21.0, "min": 20.0, "max": 22.0, "confidence": "Low"},
+        "jitter": {"result": "DERIVED", "pair_count": 2, "sample_count": 3, "mean_abs_ipdv": 1.5, "pdv_range": 2.0}
+      }
+    },
+    {
+      "id": "FIX-LAT-009",
+      "description": "Gapped series 10, 20, FAIL, 30, 40. The failure breaks adjacency. Two pairs exist and all four samples belong to a pair.",
+      "samples": [{"t": 0, "v": 10}, {"t": 100, "v": 20}, {"t": 200, "fail": "Timeout(RESPONSE)"}, {"t": 300, "v": 30}, {"t": 400, "v": 40}],
+      "expected": {
+        "latency": {"result": "AGGREGATED", "valid_count": 4, "average": 25.0, "min": 10.0, "max": 40.0, "confidence": "Low"},
+        "jitter": {"result": "DERIVED", "pair_count": 2, "sample_count": 4, "mean_abs_ipdv": 10.0, "pdv_range": 30.0}
+      },
+      "known_implementation_divergence": {
+        "impl_ref": "phase-4-measurement-foundation@9a28cc62",
+        "status": "SUSPECTED_FROM_CODE_READING",
+        "detail": "DerivedJitterStats.from seeds the first sample of a pair only when no delay has been collected yet, so the first sample of a later, separate run of pairs (30 here) is dropped from sampleCount, pdvRangeMillis and sourceMeasurementIds. Expected implementation output at that commit by hand trace: sample_count 3. Confirm by running this fixture against the Kotlin implementation."
+      }
+    },
+    {
+      "id": "FIX-LAT-010",
+      "description": "Gapped series with the extremes in the second run: 50, 60, FAIL, 10, 20. Correct range uses all four samples (10 to 60 = 50).",
+      "samples": [{"t": 0, "v": 50}, {"t": 100, "v": 60}, {"t": 200, "fail": "Timeout(RESPONSE)"}, {"t": 300, "v": 10}, {"t": 400, "v": 20}],
+      "expected": {
+        "latency": {"result": "AGGREGATED", "valid_count": 4, "average": 35.0, "min": 10.0, "max": 60.0, "confidence": "Low"},
+        "jitter": {"result": "DERIVED", "pair_count": 2, "sample_count": 4, "mean_abs_ipdv": 10.0, "pdv_range": 50.0}
+      },
+      "known_implementation_divergence": {
+        "impl_ref": "phase-4-measurement-foundation@9a28cc62",
+        "status": "SUSPECTED_FROM_CODE_READING",
+        "detail": "Same cause as FIX-LAT-009. By hand trace and a line-by-line transliteration (not execution of the Kotlin), the implementation would report sample_count 3 and pdv_range 40 here because sample 10 is dropped."
+      }
+    },
+    {
+      "id": "FIX-LAT-011",
+      "description": "Network change mid-series: samples 1 and 2 on network 1, samples 3 and 4 on network 2. The pair across the change is not counted.",
+      "samples": [{"t": 0, "v": 10, "net": 1}, {"t": 100, "v": 20, "net": 1}, {"t": 200, "v": 30, "net": 2}, {"t": 300, "v": 40, "net": 2}],
+      "expected": {
+        "latency": {"result": "NOT_ASSERTED", "reason": "Aggregating latency across two networks is a labeling hazard, see harness rule H-AGG-1"},
+        "jitter": {"result": "DERIVED", "pair_count": 2, "sample_count": 4, "mean_abs_ipdv": 10.0, "pdv_range": 30.0}
+      }
+    },
+    {
+      "id": "FIX-LAT-012",
+      "description": "Cold then warm samples: one cold-connection sample followed by three warm samples. The cold sample uses a different method id and never pairs.",
+      "samples": [
+        {"t": 0, "v": 10, "cold": true, "method": "https-h1-cold-total"},
+        {"t": 100, "v": 12}, {"t": 200, "v": 11}, {"t": 300, "v": 13}
+      ],
+      "expected": {
+        "latency": {"result": "NOT_ASSERTED", "reason": "Cold and warm samples are different methods and must not be aggregated together, see harness rule H-AGG-1"},
+        "jitter": {"result": "DERIVED", "pair_count": 2, "sample_count": 3, "mean_abs_ipdv": 1.5, "pdv_range": 2.0}
+      }
+    },
+    {
+      "id": "FIX-LAT-013",
+      "description": "Unordered series: send offsets 0, 200, 100. Unordered evidence is rejected for jitter. Latency still aggregates over the values.",
+      "samples": [{"t": 0, "v": 10}, {"t": 200, "v": 30}, {"t": 100, "v": 20}],
+      "expected": {
+        "latency": {"result": "AGGREGATED", "valid_count": 3, "average": 20.0, "min": 10.0, "max": 30.0, "confidence": "Low"},
+        "jitter": {"result": "NULL"}
+      }
+    }
+  ]
+}
