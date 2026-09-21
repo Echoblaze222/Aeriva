@@ -1,0 +1,44 @@
+{
+  "fixture_set": "dns-outcomes",
+  "fixture_format": "aeriva-fixture/1",
+  "synthetic": true,
+  "note": "SYNTHETIC TEST FIXTURES. Not real measurements. DNS responsiveness is ESTIMATION tier: a timed system lookup is evidence, never a direct measurement of a resolver.",
+  "semantics_ref": "PHASE_4_CROSS_CUTTING_TECHNICAL_DECISION_CONTRACT.md D4-10, D5-4 (DnsFailure kinds NOT_RESOLVED, CLIENT_TIMED_OUT, UNKNOWN), D5-7. MeasurementCapabilityClassifier classifies DNS_RESPONSIVENESS as Estimated.",
+  "fixtures": [
+    {
+      "id": "FIX-DNS-001",
+      "description": "Resolved in 12 ms with Private DNS off.",
+      "private_dns_mode": "OFF",
+      "lookup": {"outcome": "RESOLVED", "elapsed_ms": 12.0},
+      "expected": {"tier": "ESTIMATION", "record": "EVIDENCE_SAMPLE", "failure": null}
+    },
+    {
+      "id": "FIX-DNS-002",
+      "description": "Name did not resolve. The platform cannot separate a nonexistent name from a resolver failure at this API level.",
+      "private_dns_mode": "OFF",
+      "lookup": {"outcome": "NOT_RESOLVED", "elapsed_ms": 30.0},
+      "expected": {"tier": "ESTIMATION", "record": "FAILURE", "failure": {"type": "DnsFailure", "kind": "NOT_RESOLVED"}}
+    },
+    {
+      "id": "FIX-DNS-003",
+      "description": "Client DNS-stage timer expired.",
+      "private_dns_mode": "OPPORTUNISTIC",
+      "lookup": {"outcome": "CLIENT_TIMED_OUT", "elapsed_ms": 2000.0},
+      "expected": {"tier": "ESTIMATION", "record": "FAILURE", "failure": {"type": "DnsFailure", "kind": "CLIENT_TIMED_OUT"}}
+    },
+    {
+      "id": "FIX-DNS-004",
+      "description": "Strict Private DNS with an invalid provider host: not resolved, mode recorded, cause not separable from the device.",
+      "private_dns_mode": "STRICT",
+      "lookup": {"outcome": "NOT_RESOLVED", "elapsed_ms": 50.0},
+      "expected": {"tier": "ESTIMATION", "record": "FAILURE", "failure": {"type": "DnsFailure", "kind": "NOT_RESOLVED"}}
+    },
+    {
+      "id": "FIX-DNS-005",
+      "description": "Cache pair: a unique-label lookup (forced miss at recursive resolvers) is slower than a repeated-label lookup. Ground truth for which resolver answered requires reference-server query logs.",
+      "private_dns_mode": "OFF",
+      "pair": {"miss_ms": 45.0, "hit_ms": 1.0},
+      "expected": {"tier": "ESTIMATION", "relation": "HIT_FASTER"}
+    }
+  ]
+}
