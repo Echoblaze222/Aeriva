@@ -25,11 +25,14 @@ internal object NetworkStateMapper {
      * @param blocked the platform's own blocked-status for this app on
      *   this network (`NetworkCallback.onBlockedStatusChanged`), per
      *   PHASE_4_CROSS_CUTTING_TECHNICAL_DECISION_CONTRACT.md Decision
-     *   D4-8. Defaults to `false` because [AndroidNetworkMonitor] does
-     *   not yet track and pass the real, current value through this
-     *   change -- wiring that callback is deferred (see this change's
-     *   implementation notes); the parameter exists now so that wiring
-     *   does not require a second signature change here.
+     *   D4-8. [AndroidNetworkMonitor] now tracks and passes the real,
+     *   current value (folded across events by [NetworkEventReducer],
+     *   since `onBlockedStatusChanged` fires independently of
+     *   `onCapabilitiesChanged` and the last-known value must survive a
+     *   capabilities-only update). Defaults to `false` here only for
+     *   callers that have no blocked-status signal at all (e.g. the
+     *   canonical offline/no-network case, and this function's own unit
+     *   tests).
      */
     fun buildNetworkState(
         available: Boolean,

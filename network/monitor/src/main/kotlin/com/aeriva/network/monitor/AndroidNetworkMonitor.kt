@@ -10,7 +10,10 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.scan
 import java.time.Instant
 
 /**
@@ -20,13 +23,36 @@ import java.time.Instant
  * platform validation.
  *
  * Debouncing (architecture doc Section 6.2): loss-type events
- * ([RawNetworkEvent.Lost], [RawNetworkEvent.Unavailable]) are never
+ * ([PlatformEvent.Lost], [PlatformEvent.Unavailable]) are never
  * debounced -- "debouncing must not delay user-visible network failures
  * excessively" is explicit in the architecture doc, and a delayed offline
- * indicator is worse than a slightly chattier one. Availability and
- * capability-change events are debounced by [debounceMillis] because
- * onCapabilitiesChanged is documented to fire repeatedly in bursts as a
- * connection comes up (e.g. validation arriving after initial connect).
+ * indicator is worse than a slightly chattier one. A network becoming
+ * blocked ([PlatformEvent.BlockedStatusChanged] with `blocked = true`) is
+ * treated the same way: from this app's point of view a blocked network
+ * is not usable, so that transition must not be delayed either. Becoming
+ * unblocked, availability and capability-change events are debounced by
+ * [debounceMillis] because onCapabilitiesChanged is documented to fire
+ * repeatedly in bursts as a connection comes up (e.g. validation arriving
+ * after initial connect).
+ *
+ * Stateful folding (Phase 4, PHASE_4_CROSS_CUTTING_TECHNICAL_DECISION_CONTRACT.md
+ * Decision D4-8): `blockedByDevicePolicy` comes from
+ * `NetworkCallback.onBlockedStatusChanged`, which the platform fires
+ * independently of `onCapabilitiesChanged`
+ * (VERIFIED FACT, current official reference,
+ * `ConnectivityManager.NetworkCallback#onAvailable`: "Starting with
+ * Build.VERSION_CODES.O, this will always immediately be followed by a
+ * call to onCapabilitiesChanged(...) then ... and a call to
+ * onBlockedStatusChanged(...)" -- true for every SDK level this
+ * repository supports, since minSdk 26 = O). A capabilities update must
+ * not forget the last-known blocked value, and vice versa, so raw events
+ * are folded through [NetworkEventReducer]'s stateful, per-network
+ * [MonitorState] rather than mapped one-to-one as before. This also
+ * fixes the "stale state after a transition" requirement: see
+ * [NetworkEventReducer]'s own KDoc for the platform contract this relies
+ * on (`onAvailable`/`onLost`'s documented single-current-network
+ * behavior for a default-network callback) and its guards against
+ * out-of-order or foreign-network events.
  */
 class AndroidNetworkMonitor(
     context: Context,
@@ -38,34 +64,68 @@ class AndroidNetworkMonitor(
     private val connectivityManager =
         context.applicationContext.getSystemService(ConnectivityManager::class.java)
 
-    override fun observe(): Flow<NetworkState> = rawEvents()
+    override fun observe(): Flow<NetworkState> = platformEvents()
         .debounce { event ->
             when (event) {
-                is RawNetworkEvent.Lost, RawNetworkEvent.Unavailable -> 0L
+                is PlatformEvent.Lost, PlatformEvent.Unavailable -> 0L
+                is PlatformEvent.BlockedStatusChanged -> if (event.blocked) 0L else debounceMillis
                 else -> debounceMillis
             }
         }
-        .map { event -> toNetworkState(event) }
+        .map(::toRawNetworkEvent)
+        .scan(MonitorState.initial<Network>(now())) { state, event -> NetworkEventReducer.reduce(state, event, now()) }
+        // Drop the seed value: callers must only ever observe a state that
+        // reflects a real platform callback, never a pre-event placeholder
+        // (see AndroidNetworkMonitorInstrumentedTest's own reliance on
+        // observe().first() being a real reading).
+        .drop(1)
+        .map { state ->
+            NetworkStateMapper.buildNetworkState(
+                available = state.available,
+                snapshot = state.snapshot,
+                changedAt = state.changedAt,
+                blocked = state.blocked
+            )
+        }
+        // A dropped/ignored event (e.g. a foreign-network Lost, per
+        // NetworkEventReducer's guards) still produces a scan emission
+        // whose content is unchanged from the previous one -- collapse
+        // those rather than surface a no-op update to callers.
+        .distinctUntilChanged()
 
-    private fun rawEvents(): Flow<RawNetworkEvent> = callbackFlow {
+    private fun platformEvents(): Flow<PlatformEvent> = callbackFlow {
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                trySend(RawNetworkEvent.Available(network))
+                trySend(PlatformEvent.Available(network))
             }
 
             override fun onCapabilitiesChanged(
                 network: Network,
                 capabilities: NetworkCapabilities
             ) {
-                trySend(RawNetworkEvent.CapabilitiesChanged(network, capabilities))
+                trySend(PlatformEvent.CapabilitiesChanged(network, capabilities))
+            }
+
+            // Added in API 29 (VERIFIED FACT, current official reference,
+            // ConnectivityManager.NetworkCallback#onBlockedStatusChanged).
+            // minSdk is 26: overriding a callback method added in a later
+            // SDK level than the device's own is safe on Android -- the
+            // framework simply never invokes it on a device whose OS
+            // predates it, and the class still loads and verifies (the
+            // widely-used pattern for exactly this method; see e.g. public
+            // examples that override it with no SDK_INT guard). No
+            // @RequiresApi is needed because nothing here calls the
+            // superclass's platform implementation.
+            override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+                trySend(PlatformEvent.BlockedStatusChanged(network, blocked))
             }
 
             override fun onLost(network: Network) {
-                trySend(RawNetworkEvent.Lost(network))
+                trySend(PlatformEvent.Lost(network))
             }
 
             override fun onUnavailable() {
-                trySend(RawNetworkEvent.Unavailable)
+                trySend(PlatformEvent.Unavailable)
             }
         }
 
@@ -79,29 +139,40 @@ class AndroidNetworkMonitor(
         }
     }
 
-    private fun toNetworkState(event: RawNetworkEvent): NetworkState = when (event) {
-        is RawNetworkEvent.Lost, RawNetworkEvent.Unavailable ->
-            NetworkStateMapper.buildNetworkState(available = false, snapshot = null, changedAt = now())
-
-        is RawNetworkEvent.Available -> {
+    /**
+     * Resolves capability data outside the actual `NetworkCallback`
+     * method body, per `ConnectivityManager.NetworkCallback`'s own
+     * documented warning: "Do NOT call getNetworkCapabilities(Network) or
+     * getLinkProperties(Network) or other synchronous ConnectivityManager
+     * methods in this callback as this is prone to race conditions."
+     * [platformEvents] only ever `trySend`s into the callback channel; the
+     * actual synchronous lookup for [PlatformEvent.Available] happens here,
+     * downstream, on the flow's own collection, never inside
+     * `onAvailable` itself.
+     */
+    private fun toRawNetworkEvent(event: PlatformEvent): RawNetworkEvent<Network> = when (event) {
+        is PlatformEvent.Available -> {
             // onAvailable does not itself carry capabilities; ask for the
             // current snapshot directly rather than waiting for a
             // separate onCapabilitiesChanged callback, so callers never
             // observe a network as "available" with stale/absent data.
+            // A null result here (capabilities not yet obtainable) is
+            // passed through as-is -- Android had nothing reliable to
+            // give us, so nothing is invented; see RawNetworkEvent's own
+            // KDoc.
             val capabilities = connectivityManager?.getNetworkCapabilities(event.network)
-            NetworkStateMapper.buildNetworkState(
-                available = true,
-                snapshot = capabilities?.let(::toSnapshot),
-                changedAt = now()
-            )
+            RawNetworkEvent.Available(event.network, capabilities?.let(::toSnapshot))
         }
 
-        is RawNetworkEvent.CapabilitiesChanged ->
-            NetworkStateMapper.buildNetworkState(
-                available = true,
-                snapshot = toSnapshot(event.capabilities),
-                changedAt = now()
-            )
+        is PlatformEvent.CapabilitiesChanged ->
+            RawNetworkEvent.CapabilitiesChanged(event.network, toSnapshot(event.capabilities))
+
+        is PlatformEvent.BlockedStatusChanged ->
+            RawNetworkEvent.BlockedStatusChanged(event.network, event.blocked)
+
+        is PlatformEvent.Lost -> RawNetworkEvent.Lost(event.network)
+
+        PlatformEvent.Unavailable -> RawNetworkEvent.Unavailable
     }
 
     private fun toSnapshot(capabilities: NetworkCapabilities): RawCapabilitiesSnapshot {
@@ -124,14 +195,16 @@ class AndroidNetworkMonitor(
         )
     }
 
-    private sealed interface RawNetworkEvent {
-        data class Available(val network: Network) : RawNetworkEvent
+    /** Raw platform callback events, one-to-one with the NetworkCallback methods used. */
+    private sealed interface PlatformEvent {
+        data class Available(val network: Network) : PlatformEvent
         data class CapabilitiesChanged(
             val network: Network,
             val capabilities: NetworkCapabilities
-        ) : RawNetworkEvent
-        data class Lost(val network: Network) : RawNetworkEvent
-        data object Unavailable : RawNetworkEvent
+        ) : PlatformEvent
+        data class BlockedStatusChanged(val network: Network, val blocked: Boolean) : PlatformEvent
+        data class Lost(val network: Network) : PlatformEvent
+        data object Unavailable : PlatformEvent
     }
 
     private companion object {
