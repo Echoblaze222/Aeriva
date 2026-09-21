@@ -278,7 +278,17 @@ class NetworkEventReducerTest {
 
     @Test
     fun disconnectedThenConnected_reflectsNewNetworkNotStaleOfflineFlags() {
-        val afterUnavailable = NetworkEventReducer.reduce(
+        // Explicit type argument required here: with no expected-type
+        // context, inferring N purely from (MonitorState.initial(t0),
+        // RawNetworkEvent.Unavailable) resolves N = Nothing (Unavailable's
+        // static type is RawNetworkEvent<Nothing>, and covariance makes
+        // that a valid-looking match for any N) -- which then rejects the
+        // Available("A", ...) call below, whose argument type is
+        // RawNetworkEvent<String>, not assignable to the poisoned
+        // RawNetworkEvent<Nothing>. Every other test in this file avoids
+        // the trap because its first event already carries concrete type
+        // evidence (e.g. Available("A", ...)) instead of Unavailable.
+        val afterUnavailable: MonitorState<String> = NetworkEventReducer.reduce(
             MonitorState.initial(t0),
             RawNetworkEvent.Unavailable,
             t1
