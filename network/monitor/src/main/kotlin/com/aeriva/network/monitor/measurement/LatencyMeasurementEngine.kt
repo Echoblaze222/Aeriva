@@ -5,6 +5,7 @@ import com.aeriva.core.model.measurement.DerivedLatencyStats
 import com.aeriva.core.model.measurement.LatencyMeasurement
 import com.aeriva.core.model.measurement.MeasurementFailure
 import com.aeriva.core.model.measurement.MeasurementNetworkContext
+import com.aeriva.core.model.measurement.MeasurementStage
 import com.aeriva.network.monitor.CapabilityClassification
 import com.aeriva.network.monitor.MeasurementCapability
 import com.aeriva.network.monitor.MeasurementCapabilityClassifier
@@ -152,7 +153,8 @@ class LatencyMeasurementEngine(
             }
         } catch (timeout: TimeoutCancellationException) {
             LatencyMeasurement.Failed(
-                request.id, request.context, startedAt, request.method, MeasurementFailure.Timeout
+                request.id, request.context, startedAt, request.method,
+                MeasurementFailure.Timeout(MeasurementStage.Unknown)
             )
         }
 

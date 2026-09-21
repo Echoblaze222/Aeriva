@@ -8,6 +8,7 @@ import com.aeriva.core.model.TransportType
 import com.aeriva.core.model.measurement.LatencyMeasurement
 import com.aeriva.core.model.measurement.MeasurementFailure
 import com.aeriva.core.model.measurement.MeasurementNetworkContext
+import com.aeriva.core.model.measurement.MeasurementStage
 import com.aeriva.network.monitor.CapabilityClassification
 import com.aeriva.network.monitor.MeasurementCapability
 import com.aeriva.network.monitor.MeasurementCapabilityClassifier
@@ -149,7 +150,7 @@ class LatencyMeasurementEngineTest {
         val outcome = engine.measure(request())
 
         val failed = (outcome as LatencyMeasurementOutcome.Measured).measurement as LatencyMeasurement.Failed
-        assertEquals(MeasurementFailure.Timeout, failed.failure)
+        assertEquals(MeasurementFailure.Timeout(MeasurementStage.Unknown), failed.failure)
         assertEquals(1, client.cancelledCallCount)
         assertEquals(0, client.completedCallCount)
     }

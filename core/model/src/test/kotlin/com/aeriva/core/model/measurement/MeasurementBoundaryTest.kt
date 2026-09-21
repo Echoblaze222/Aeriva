@@ -34,7 +34,7 @@ class MeasurementBoundaryTest {
             context = context,
             measuredAt = NOW,
             method = "tcp-round-trip",
-            failure = MeasurementFailure.Timeout
+            failure = MeasurementFailure.Timeout(MeasurementStage.Unknown)
         )
 
         assertEquals("succeeded", describe(succeeded))
