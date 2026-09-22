@@ -31,11 +31,19 @@ import java.time.Instant
  * plain, non-nullable [Boolean] -- per Decision D4-8 they are reliably
  * observable from the platform's own capability and callback bits, so
  * there is no uncertain "cannot tell" state to represent for them.
- * [NetworkStateMapper] always computes a real value for each rather than
- * relying on the `false` default below; the default exists only so
- * existing constructor call sites elsewhere in the codebase that predate
- * this change (for example fixture states in other modules' tests) keep
- * compiling, not to license a new call site skipping a real value.
+ *
+ * These three fields deliberately have **no default value**. A default
+ * of `false` would make "not observed" indistinguishable from "observed
+ * false" -- for [blockedByDevicePolicy] and [captivePortalReported] that
+ * distinction drives real engine decisions (declining a blocked network,
+ * the captive-portal two-signal rule), so a call site that forgot to
+ * compute a real value would otherwise silently fabricate an observation
+ * instead of failing to compile. [NetworkStateMapper] always computes a
+ * real value for each; every other constructor call site in this
+ * repository does the same (verified by a full-repository sweep as part
+ * of Phase 4's engine/foundation reconciliation -- see
+ * PHASE_4_ENGINE_FOUNDATION_RECONCILIATION.md Section 7.1 and
+ * PHASE_4_ENGINE_FOUNDATION_INTEGRATION_NOTES.md).
  */
 data class NetworkState(
     val transport: TransportType,
@@ -46,9 +54,9 @@ data class NetworkState(
     val estimatedQuality: NetworkQuality,
     val diagnosticsStatus: DiagnosticsStatus,
     val lastChangedAt: Instant,
-    val captivePortalReported: Boolean = false,
-    val vpnPresent: Boolean = false,
-    val blockedByDevicePolicy: Boolean = false
+    val captivePortalReported: Boolean,
+    val vpnPresent: Boolean,
+    val blockedByDevicePolicy: Boolean
 ) {
     companion object {
         /** State before the monitor has produced its first real reading. */
