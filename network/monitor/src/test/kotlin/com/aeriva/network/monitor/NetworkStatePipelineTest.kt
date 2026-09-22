@@ -121,8 +121,9 @@ class NetworkStatePipelineTest {
         assertEquals(1, collected.size)
         assertEquals(TransportType.WIFI, collected[0].transport)
 
-        // Past the switch burst (t=500) and its own settle window.
-        advanceTimeBy(400) // now at t = 701
+        // Past the switch burst (t=500) and comfortably past its own
+        // debounce window (500 + 300 = 800).
+        advanceTimeBy(600) // now at t = 901
         runCurrent()
         job.cancel()
 
@@ -302,14 +303,15 @@ class NetworkStatePipelineTest {
         runCurrent()
         assertEquals(1, collected.size)
 
-        // Just 150ms after the change at t = 500 (t = 650): must NOT
-        // have emitted yet, proving this path really is delayed, unlike
-        // the offline/blocked paths above.
-        advanceTimeBy(150)
+        // t = 701: 200ms after the change at t = 500, still short of its
+        // own +300ms debounce window -- must NOT have emitted yet, proving
+        // this path really is delayed, unlike the offline/blocked paths
+        // above.
+        advanceTimeBy(400)
         runCurrent()
         assertEquals("a still-usable change must wait out the debounce window", 1, collected.size)
 
-        advanceTimeBy(200) // t = 850: > 300ms after t = 500
+        advanceTimeBy(250) // t = 951: > 300ms after t = 500
         runCurrent()
         job.cancel()
 
@@ -329,11 +331,14 @@ class NetworkStatePipelineTest {
         // of the reducer.
         val collected = mutableListOf<NetworkState>()
         val events = flow {
-            emit(RawNetworkEvent.Available("A", wifiSnapshot))
-            emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot.copy(isValidated = false)))
-            emit(RawNetworkEvent.BlockedStatusChanged("A", true))
-            emit(RawNetworkEvent.BlockedStatusChanged("A", false))
+            emit(RawNetworkEvent.Available("A", wifiSnapshot.copy(isValidated = false)))
+            // Mid-burst, momentarily reflects cellular's data on the same
+            // network identity -- unrealistic on its own, but exercises
+            // that every field of every intermediate event really does
+            // flow through the fold, not just the very first and last.
+            emit(RawNetworkEvent.CapabilitiesChanged("A", cellularSnapshot))
             emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
+            emit(RawNetworkEvent.BlockedStatusChanged("A", false))
             delay(UPSTREAM_IDLE_MS)
         }
         val job = launch {
