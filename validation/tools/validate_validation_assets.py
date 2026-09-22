@@ -355,7 +355,7 @@ def check_docs_and_lint(all_fixture_ids, skip_docs):
         ok(fid in referenced, f"fixture {fid} is not described in any Phase 5 document")
     harness = texts.get("PHASE_5_MEASUREMENT_VALIDATION_HARNESS.md", "")
     for letter in "ABCDEFGHIJKLM":
-        ok(re.search(rf"^\| NC-{letter} \|", harness, re.M) is not None, f"scenario NC-{letter} has no table row in the harness document")
+        ok(re.search(rf"^\| NC-{letter}\b", harness, re.M) is not None, f"scenario NC-{letter} has no table row in the harness document")
     matrix = texts.get("PHASE_5_DEVICE_TEST_MATRIX.md", "")
     defined_dm = set(re.findall(r"^\| (DM-[A-Z0-9-]+) \|", matrix, re.M))
     for ref in set(re.findall(r"\bDM-[A-Z0-9-]+\b", joined)):
