@@ -1,5 +1,12 @@
 package com.aeriva.network.monitor
 
+import com.aeriva.core.model.NetworkState
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.scan
 import java.time.Instant
 
 /**
@@ -173,3 +180,79 @@ internal object NetworkEventReducer {
         changedAt = changedAt
     )
 }
+
+/**
+ * Folds a stream of raw platform events into the [NetworkState] flow
+ * [AndroidNetworkMonitor.observe] exposes: the fold (via
+ * [NetworkEventReducer.reduce]) plus the debounce that coalesces rapid
+ * *output* changes for slow consumers (architecture doc Section 6.2).
+ *
+ * Debounce here is applied to the **already-folded, already-mapped**
+ * [NetworkState] output -- never to [events] itself. This is the direct
+ * fix for audit finding CF-1
+ * (PHASE_4_NETWORK_STATE_INTEGRATION_AUDIT.md, branch
+ * phase-4-network-state-audit @ b4f0e6c): debounce previously ran on the
+ * raw, pre-fold platform-event stream, upstream of this fold. The
+ * platform's own guaranteed onAvailable -> onCapabilitiesChanged ->
+ * onBlockedStatusChanged burst (VERIFIED FACT, see
+ * [AndroidNetworkMonitor]'s own KDoc) fires well inside any realistic
+ * debounce window, and kotlinx.coroutines' `debounce` -- which, per its
+ * own current documentation, "filters out values that are followed by
+ * the newer values within the given timeout... the latest value is
+ * always emitted" -- silently discarded the `Available`/
+ * `CapabilitiesChanged` events [NetworkEventReducer] needs to establish
+ * `state.network` before a same-network `BlockedStatusChanged` can do
+ * anything useful. Moving debounce here means [events] always reaches
+ * [NetworkEventReducer.reduce] in full and in order: a lifecycle burst
+ * can never lose the events that establish which network is active.
+ * Only the fully-folded *result* of a burst is ever coalesced, and only
+ * after it already reflects every event the burst contained -- so
+ * debounce here cannot corrupt what the reducer sees, by construction:
+ * it sits entirely after the reducer in the operator chain, with nothing
+ * feeding back.
+ *
+ * Generic over the network identity type ([N]) for the same reason
+ * [RawNetworkEvent] is: [AndroidNetworkMonitor] is the only caller that
+ * supplies `N = android.net.Network`. A plain JVM test can drive this
+ * with a synthetic `Flow<RawNetworkEvent<String>>` -- including one that
+ * emits an entire onAvailable/onCapabilitiesChanged/onBlockedStatusChanged
+ * burst with no delay between events, the exact scenario CF-1 was found
+ * in -- and observe real (virtual-time) debounce behavior, with no
+ * Android and no Robolectric involved. See `NetworkStatePipelineTest`.
+ *
+ * @param debounceMillis how long a [NetworkState] that still represents
+ *   a usable, unblocked network waits for further changes before being
+ *   emitted. A [NetworkState] that just became unusable -- `available =
+ *   false` (offline/lost) or `blockedByDevicePolicy = true` (a device
+ *   policy just blocked this app on this network) -- is never delayed:
+ *   this preserves the architecture doc's own requirement ("debouncing
+ *   must not delay user-visible network failures excessively") and is
+ *   the output-level equivalent of what the pre-fix, event-level
+ *   debounce selector did for `Lost`/`Unavailable`/
+ *   `BlockedStatusChanged(blocked = true)`.
+ */
+internal fun <N> foldNetworkStateFlow(
+    events: Flow<RawNetworkEvent<N>>,
+    debounceMillis: Long,
+    now: () -> Instant
+): Flow<NetworkState> = events
+    .scan(MonitorState.initial<N>(now())) { state, event -> NetworkEventReducer.reduce(state, event, now()) }
+    // Drop the seed value: callers must only ever observe a state that
+    // reflects a real platform event, never a pre-event placeholder.
+    .drop(1)
+    .map { state ->
+        NetworkStateMapper.buildNetworkState(
+            available = state.available,
+            snapshot = state.snapshot,
+            changedAt = state.changedAt,
+            blocked = state.blocked
+        )
+    }
+    .debounce { networkState ->
+        if (!networkState.available || networkState.blockedByDevicePolicy) 0L else debounceMillis
+    }
+    // A dropped/ignored event (e.g. a foreign-network Lost, per
+    // NetworkEventReducer's guards) still produces a scan emission whose
+    // content is unchanged from the previous one -- collapse those
+    // rather than surface a no-op update to callers.
+    .distinctUntilChanged()

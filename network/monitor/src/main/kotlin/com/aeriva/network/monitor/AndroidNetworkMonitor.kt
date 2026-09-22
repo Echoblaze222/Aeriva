@@ -9,11 +9,7 @@ import com.aeriva.core.model.NetworkState
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.scan
 import java.time.Instant
 
 /**
@@ -22,37 +18,42 @@ import java.time.Instant
  * built around platform connectivity APIs and callbacks") and Phase 0's
  * platform validation.
  *
- * Debouncing (architecture doc Section 6.2): loss-type events
- * ([PlatformEvent.Lost], [PlatformEvent.Unavailable]) are never
- * debounced -- "debouncing must not delay user-visible network failures
- * excessively" is explicit in the architecture doc, and a delayed offline
- * indicator is worse than a slightly chattier one. A network becoming
- * blocked ([PlatformEvent.BlockedStatusChanged] with `blocked = true`) is
- * treated the same way: from this app's point of view a blocked network
- * is not usable, so that transition must not be delayed either. Becoming
- * unblocked, availability and capability-change events are debounced by
- * [debounceMillis] because onCapabilitiesChanged is documented to fire
- * repeatedly in bursts as a connection comes up (e.g. validation arriving
- * after initial connect).
- *
- * Stateful folding (Phase 4, PHASE_4_CROSS_CUTTING_TECHNICAL_DECISION_CONTRACT.md
- * Decision D4-8): `blockedByDevicePolicy` comes from
- * `NetworkCallback.onBlockedStatusChanged`, which the platform fires
- * independently of `onCapabilitiesChanged`
- * (VERIFIED FACT, current official reference,
+ * Raw platform events reach [NetworkEventReducer] undebounced (Phase 4,
+ * PHASE_4_CROSS_CUTTING_TECHNICAL_DECISION_CONTRACT.md Decision D4-8, and
+ * the fix for audit finding CF-1, PHASE_4_NETWORK_STATE_INTEGRATION_AUDIT.md,
+ * branch phase-4-network-state-audit @ b4f0e6c): `blockedByDevicePolicy`
+ * comes from `NetworkCallback.onBlockedStatusChanged`, which the platform
+ * fires independently of, but always immediately after,
+ * `onCapabilitiesChanged` (VERIFIED FACT, current official reference,
  * `ConnectivityManager.NetworkCallback#onAvailable`: "Starting with
  * Build.VERSION_CODES.O, this will always immediately be followed by a
  * call to onCapabilitiesChanged(...) then ... and a call to
  * onBlockedStatusChanged(...)" -- true for every SDK level this
- * repository supports, since minSdk 26 = O). A capabilities update must
- * not forget the last-known blocked value, and vice versa, so raw events
- * are folded through [NetworkEventReducer]'s stateful, per-network
- * [MonitorState] rather than mapped one-to-one as before. This also
- * fixes the "stale state after a transition" requirement: see
- * [NetworkEventReducer]'s own KDoc for the platform contract this relies
- * on (`onAvailable`/`onLost`'s documented single-current-network
- * behavior for a default-network callback) and its guards against
- * out-of-order or foreign-network events.
+ * repository supports, since minSdk 26 = O). [NetworkEventReducer] needs
+ * every event in that burst, in order, to establish which network is
+ * active before a same-network `BlockedStatusChanged` means anything --
+ * debouncing the *raw* event stream can silently discard the
+ * `Available`/`CapabilitiesChanged` events it depends on, since the
+ * platform's guaranteed burst fires well inside any realistic debounce
+ * window (this is exactly what audit finding CF-1 identified: earlier
+ * versions of this file debounced the raw stream, and a fast burst could
+ * collapse to a lone `BlockedStatusChanged` that the reducer could not
+ * use, leaving the monitor stuck offline or stuck on a stale network
+ * after a transition). See [foldNetworkStateFlow]'s own KDoc for the full
+ * mechanism and [NetworkEventReducer]'s KDoc for the platform contract
+ * (`onAvailable`/`onLost`'s documented single-current-network behavior)
+ * its guards rely on.
+ *
+ * Debouncing (architecture doc Section 6.2) is applied only to the
+ * already-folded [NetworkState] output, by [foldNetworkStateFlow] --
+ * never to the raw event stream. A [NetworkState] that just became
+ * unusable (`available = false` or `blockedByDevicePolicy = true`) is
+ * never delayed -- "debouncing must not delay user-visible network
+ * failures excessively" is explicit in the architecture doc, and a
+ * delayed offline/blocked indicator is worse than a slightly chattier
+ * one. Every other change is debounced by [debounceMillis] because
+ * onCapabilitiesChanged is documented to fire repeatedly in bursts as a
+ * connection comes up (e.g. validation arriving after initial connect).
  */
 class AndroidNetworkMonitor(
     context: Context,
@@ -64,34 +65,11 @@ class AndroidNetworkMonitor(
     private val connectivityManager =
         context.applicationContext.getSystemService(ConnectivityManager::class.java)
 
-    override fun observe(): Flow<NetworkState> = platformEvents()
-        .debounce { event ->
-            when (event) {
-                is PlatformEvent.Lost, PlatformEvent.Unavailable -> 0L
-                is PlatformEvent.BlockedStatusChanged -> if (event.blocked) 0L else debounceMillis
-                else -> debounceMillis
-            }
-        }
-        .map(::toRawNetworkEvent)
-        .scan(MonitorState.initial<Network>(now())) { state, event -> NetworkEventReducer.reduce(state, event, now()) }
-        // Drop the seed value: callers must only ever observe a state that
-        // reflects a real platform callback, never a pre-event placeholder
-        // (see AndroidNetworkMonitorInstrumentedTest's own reliance on
-        // observe().first() being a real reading).
-        .drop(1)
-        .map { state ->
-            NetworkStateMapper.buildNetworkState(
-                available = state.available,
-                snapshot = state.snapshot,
-                changedAt = state.changedAt,
-                blocked = state.blocked
-            )
-        }
-        // A dropped/ignored event (e.g. a foreign-network Lost, per
-        // NetworkEventReducer's guards) still produces a scan emission
-        // whose content is unchanged from the previous one -- collapse
-        // those rather than surface a no-op update to callers.
-        .distinctUntilChanged()
+    override fun observe(): Flow<NetworkState> = foldNetworkStateFlow(
+        events = platformEvents().map(::toRawNetworkEvent),
+        debounceMillis = debounceMillis,
+        now = now
+    )
 
     private fun platformEvents(): Flow<PlatformEvent> = callbackFlow {
         val callback = object : ConnectivityManager.NetworkCallback() {
@@ -148,7 +126,10 @@ class AndroidNetworkMonitor(
      * [platformEvents] only ever `trySend`s into the callback channel; the
      * actual synchronous lookup for [PlatformEvent.Available] happens here,
      * downstream, on the flow's own collection, never inside
-     * `onAvailable` itself.
+     * `onAvailable` itself. This conversion runs undebounced (see this
+     * file's own class KDoc and [foldNetworkStateFlow]) so it sees every
+     * platform event, in order, with nothing dropped before it reaches
+     * [NetworkEventReducer].
      */
     private fun toRawNetworkEvent(event: PlatformEvent): RawNetworkEvent<Network> = when (event) {
         is PlatformEvent.Available -> {
