@@ -218,3 +218,23 @@ site risk rather than relying on having found all of them by search.
 A second CircleCI run against the fixed commit should be checked before
 this branch is treated as done; see this task's own final report for
 that run's actual result.
+
+## Update (Phase 4 engine/foundation reconciliation, Decision DD-5)
+The `= false` defaults added above were later removed again on
+`phase-4-engine-foundation-integration` (Stage 2). A full repository-wide
+`git grep` sweep (all 133 tracked files, every module and source set, at
+the point of reconciliation) found exactly 6 `NetworkState(...)`
+construction sites in the whole repository, and every one -- including
+`core:database`'s `NetworkHistoryRepositoryTest`, the site this addendum
+was written to guard against -- already supplied all three fields
+explicitly. The missed-call-site risk this addendum describes no longer
+existed once the sweep could actually be run (this sandbox could not
+reach GitHub's code search or a real cross-module Gradle build at the
+time this addendum was written; the reconciliation task cloned the repo
+directly instead). A default of `false` makes "not observed"
+indistinguishable from "observed false" for two fields that drive real
+engine decisions, so removing the default converts a future missed call
+site back into a compile error instead of a silent fabrication. See
+`PHASE_4_ENGINE_FOUNDATION_RECONCILIATION.md` Section 5.C and
+`PHASE_4_ENGINE_FOUNDATION_INTEGRATION_NOTES.md` for the full sweep
+results and CI evidence.
