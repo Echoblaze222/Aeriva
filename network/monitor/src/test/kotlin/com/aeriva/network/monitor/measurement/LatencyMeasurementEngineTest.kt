@@ -2,6 +2,7 @@ package com.aeriva.network.monitor.measurement
 
 import com.aeriva.core.common.AerivaDispatchers
 import com.aeriva.core.common.TestAerivaDispatchers
+import com.aeriva.core.logging.AerivaLogger
 import com.aeriva.core.model.DiagnosticsStatus
 import com.aeriva.core.model.NetworkQuality
 import com.aeriva.core.model.NetworkState
@@ -37,7 +38,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Test
 
 /**
@@ -81,6 +81,14 @@ class LatencyMeasurementEngineTest {
         sdkInt: Int = 34,
         grantedPermissions: Set<String> = setOf("android.permission.INTERNET")
     ) = LatencyMeasurementRequest(id, target, context, sdkInt, grantedPermissions)
+
+    /** Default method value, referenced by tests instead of the literal
+     * `"tcp-round-trip"` string so this suite pins the request's own
+     * default rather than a duplicated copy of it (Phase 4 reconciliation
+     * N9: `MeasurementMethodTest` already asserts that literal is *not*
+     * a registered method, so this suite should not also assert on it as
+     * if it had special meaning). */
+    private val defaultMethod = request().method
 
     // -- 1: successful latency measurement ------------------------------
 
@@ -198,6 +206,31 @@ class LatencyMeasurementEngineTest {
         assertFalse("a cancelled measurement must never emit an outcome", sawAnOutcome)
         assertEquals(1, client.cancelledCallCount)
     }
+
+    @Test
+    fun measure_whenClientThrowsCancellationException_whileCallerIsActive_returnsUnclassified_notSilentCancellation() =
+        runTest {
+            // N2: a CancellationException that is NOT the caller's own
+            // (the caller's own withTimeout/job.cancel() is proven
+            // separately above and below) must never leave measure()
+            // silently -- that would look exactly like an ordinary
+            // caller cancellation to code further up the stack. This is
+            // a client defect, reported as Unclassified, same as any
+            // other unexpected exception.
+            val recordingLogger = RecordingLogger()
+            val client = object : NetworkClient {
+                override suspend fun probe(target: String): NetworkClientOutcome =
+                    throw CancellationException("client cancelled itself for its own unrelated reason")
+            }
+            val engine = engine(client, logger = recordingLogger)
+
+            val outcome = engine.measure(request())
+
+            val failed = (outcome as LatencyMeasurementOutcome.Measured).measurement as LatencyMeasurement.Failed
+            assertEquals(MeasurementFailure.Unclassified("CancellationException"), failed.failure)
+            assertTrue("the caller was never cancelled", isActive)
+            assertEquals(1, recordingLogger.entries.size)
+        }
 
     // -- 8: invalid/malformed measurement ----------------------------------
 
@@ -375,18 +408,54 @@ class LatencyMeasurementEngineTest {
     }
 
     @Test
-    fun measure_whenClientThrowsItsOwnTimeout_whileCallerIsActive_returnsTimeoutFailure_notSilentCancellation() = runTest {
+    fun measure_whenClientLeaksItsOwnTimeout_whileCallerIsActive_returnsUnclassified_notFabricatedTimeout() = runTest {
+        // Phase 4 reconciliation Decision B: MeasurementFailure.Timeout is
+        // reserved exclusively for this engine's own backstop deadline
+        // (Decision D5-10, MeasurementStage.Unknown's own KDoc). A
+        // NetworkClient that throws its own TimeoutCancellationException
+        // instead of returning an explicit outcome is a client defect,
+        // reported as Unclassified -- never fabricated as this engine's
+        // own Timeout, which would make "the backstop fired" ambiguous
+        // with "some other timeout happened to also be 10ms".
+        val recordingLogger = RecordingLogger()
         val client = object : NetworkClient {
             override suspend fun probe(target: String): NetworkClientOutcome =
                 withTimeout(10L) { awaitCancellation() }
         }
-        val engine = engine(client, timeoutMillis = ONE_DAY_MILLIS)
+        val engine = engine(client, timeoutMillis = ONE_DAY_MILLIS, logger = recordingLogger)
 
         val outcome = engine.measure(request())
 
         val failed = (outcome as LatencyMeasurementOutcome.Measured).measurement as LatencyMeasurement.Failed
-        assertTrue(failed.failure is MeasurementFailure.Timeout)
+        assertEquals(MeasurementFailure.Unclassified("TimeoutCancellationException"), failed.failure)
         assertTrue("the caller was never cancelled", isActive)
+        assertEquals(
+            "a leaked client timeout must log exactly one defect",
+            1,
+            recordingLogger.entries.size
+        )
+    }
+
+    @Test
+    fun measure_whenEngineOwnDeadlineExpires_returnsExactlyTimeoutUnknown_neverUnclassified() = runTest {
+        // N7 (other half): the engine's own withTimeoutOrNull deadline is
+        // the *only* source of MeasurementFailure.Timeout, and it is
+        // always stage Unknown until a real client reports real stages
+        // (S3/S4). Equality, not `is`, so a regression that widened this
+        // to Unclassified or changed the stage would fail here.
+        val recordingLogger = RecordingLogger()
+        val client = FakeNetworkClient().apply { enqueueHang() }
+        val engine = engine(client, timeoutMillis = 1_000L, logger = recordingLogger)
+
+        val outcome = engine.measure(request())
+
+        val failed = (outcome as LatencyMeasurementOutcome.Measured).measurement as LatencyMeasurement.Failed
+        assertEquals(MeasurementFailure.Timeout(MeasurementStage.Unknown), failed.failure)
+        assertTrue(
+            "the engine's own backstop deadline firing is the expected timeout " +
+                "mechanism until S4, not a defect (Section 5.G) -- it must not log",
+            recordingLogger.entries.isEmpty()
+        )
     }
 
     // -- Cancellation: the caller's own timeout is cancellation, not a failure --
@@ -543,19 +612,32 @@ class LatencyMeasurementEngineTest {
     }
 
     @Test
-    fun measure_withNonMonotonicElapsedClock_failsLoudly_insteadOfReportingNegativeLatency() = runTest {
+    fun measure_withNonMonotonicElapsedClock_returnsUnclassified_neverReportsNegativeLatency() = runTest {
+        // Decision D5-9: measure() never throws for any outcome except
+        // genuine caller cancellation, so a non-monotonic clock -- a
+        // programming error in whatever clock was injected -- is now an
+        // explicit Unclassified outcome (with exactly one logged defect)
+        // instead of a raw IllegalStateException escaping this call.
+        // What must never happen, either way: a fabricated Succeeded
+        // carrying a negative valueMillis.
+        val recordingLogger = RecordingLogger()
         val client = FakeNetworkClient().apply { enqueueSuccess(ByteArray(8)) }
         var reads = 0
-        val engine = engine(client, elapsedNanos = { if (reads++ == 0) 1_000_000L else 400_000L })
+        val engine = engine(
+            client,
+            elapsedNanos = { if (reads++ == 0) 1_000_000L else 400_000L },
+            logger = recordingLogger
+        )
 
-        var delivered: LatencyMeasurementOutcome? = null
-        try {
-            delivered = engine.measure(request())
-            fail("a clock that runs backwards must not produce a measurement: $delivered")
-        } catch (expected: IllegalStateException) {
-            // loud programming-error signal, not a fabricated Succeeded
-        }
-        assertNull(delivered)
+        val outcome = engine.measure(request())
+
+        val failed = (outcome as LatencyMeasurementOutcome.Measured).measurement as LatencyMeasurement.Failed
+        assertEquals(MeasurementFailure.Unclassified("NonMonotonicElapsedClockException"), failed.failure)
+        assertEquals(
+            "a non-monotonic clock must log exactly one defect",
+            1,
+            recordingLogger.entries.size
+        )
     }
 
     @Test
@@ -578,7 +660,7 @@ class LatencyMeasurementEngineTest {
         assertEquals(8L, tls.id)
         assertSame(availableContext, refused.context)
         assertSame(availableContext, tls.context)
-        assertEquals("tcp-round-trip", refused.method)
+        assertEquals(defaultMethod, refused.method)
         assertEquals(Instant.EPOCH, refused.measuredAt)
     }
 
@@ -599,39 +681,71 @@ class LatencyMeasurementEngineTest {
     // -- Exception boundary --------------------------------------------------------
 
     @Test
-    fun measure_onUnexpectedClientException_propagates_andNeverBecomesAMeasurement() = runTest {
+    fun measure_onUnexpectedClientException_returnsUnclassified_neverSucceeded_andLogsOneDefect() = runTest {
+        // Decision D5-9: measure() never throws for this case either --
+        // an unexpected Exception from the client becomes an explicit
+        // Unclassified(exceptionClass) outcome, never an uncaught throw
+        // and never (obviously) a fabricated Succeeded.
+        val recordingLogger = RecordingLogger()
         val client = ThrowingNetworkClient(IllegalStateException("programming error in client"))
+        val engine = engine(client, logger = recordingLogger)
+
+        val outcome = engine.measure(request())
+
+        val failed = (outcome as LatencyMeasurementOutcome.Measured).measurement as LatencyMeasurement.Failed
+        assertEquals(MeasurementFailure.Unclassified("IllegalStateException"), failed.failure)
+        assertEquals(1, client.calls)
+        assertEquals("an unexpected exception must log exactly one defect", 1, recordingLogger.entries.size)
+    }
+
+    @Test
+    fun measure_onUnexpectedClientException_neverCaughtAsError() = runTest {
+        // N3: Error is deliberately never caught -- an AssertionError (or
+        // any other Error) from the client must still propagate out of
+        // measure(), not be folded into Unclassified.
+        val client = ThrowingNetworkClient(AssertionError("process-level failure, not a measurement"))
         val engine = engine(client)
 
         var delivered: LatencyMeasurementOutcome? = null
-        var thrown: Throwable? = null
+        var thrown: AssertionError? = null
         try {
             delivered = engine.measure(request())
-        } catch (e: IllegalStateException) {
+        } catch (e: AssertionError) {
             thrown = e
         }
 
         assertNull(delivered)
         assertNotNull(thrown)
-        assertEquals("programming error in client", thrown?.message)
-        assertEquals(1, client.calls)
     }
 
     @Test
-    fun measureSeries_onUnexpectedClientException_abandonsSeries_withoutPartialResult() = runTest {
-        val client = ThrowingNetworkClient(IllegalStateException("programming error in client"))
+    fun measureSeries_onUnexpectedClientException_continuesSeries_inOrder_aggregatingOnlySuccesses() = runTest {
+        // Decision D5-9 extends to measureSeries: an unexpected exception
+        // from one sample must not abandon the whole series (the old
+        // "abandons series" behavior silently discarded every other
+        // sample's outcome). The series now runs every request, in
+        // order, and derives stats only from the ones that actually
+        // succeeded.
+        val client = SometimesThrowingNetworkClient(throwOnCallNumber = 2)
         val engine = engine(client)
 
-        var delivered: LatencyAggregationOutcome? = null
-        try {
-            delivered = engine.measureSeries((1..3L).map { request(id = it) })
-            fail("an unexpected exception must not be folded into an aggregate: $delivered")
-        } catch (expected: IllegalStateException) {
-            // propagated
-        }
+        val outcome = engine.measureSeries((1..3L).map { request(id = it) })
 
-        assertNull(delivered)
-        assertEquals("series must stop at the failing request", 1, client.calls)
+        assertEquals("series must run every request, not stop at the failing one", 3, client.calls)
+        val failures = outcome.outcomes
+            .map { (it as LatencyMeasurementOutcome.Measured).measurement }
+            .filterIsInstance<LatencyMeasurement.Failed>()
+        assertEquals(1, failures.size)
+        assertEquals(MeasurementFailure.Unclassified("IllegalStateException"), failures.single().failure)
+        assertEquals(listOf(1L, 2L, 3L), outcome.outcomes.map {
+            (it as LatencyMeasurementOutcome.Measured).measurement.id
+        })
+        val aggregated = outcome as LatencyAggregationOutcome.Aggregated
+        assertEquals(
+            "stats must be derived only from the samples that actually succeeded",
+            2,
+            aggregated.stats.sourceMeasurementIds.size
+        )
     }
 
     // -- measureSeries ----------------------------------------------------------------
@@ -795,6 +909,40 @@ class LatencyMeasurementEngineTest {
         }
     }
 
+    /** Throws on exactly one scripted call number (1-indexed), succeeds
+     * on every other call -- for proving [LatencyMeasurementEngine]'s
+     * measureSeries continues past a single unexpected exception rather
+     * than abandoning the whole series (Decision D5-9). */
+    private class SometimesThrowingNetworkClient(private val throwOnCallNumber: Int) : NetworkClient {
+        var calls = 0
+            private set
+
+        override suspend fun probe(target: String): NetworkClientOutcome {
+            calls++
+            if (calls == throwOnCallNumber) {
+                throw IllegalStateException("programming error on call $calls")
+            }
+            return NetworkClientOutcome.Success(ByteArray(8))
+        }
+    }
+
+    /** Records every defect entry logged via [AerivaLogger.e], the only
+     * method [LatencyMeasurementEngine] calls -- deliberately does not
+     * implement [AerivaLogger.i]/[AerivaLogger.w] beyond no-ops, since
+     * this engine never calls them. Recording just the count (not
+     * asserting on message contents) matches Decision DD-3: the message
+     * format is documentation, not a stable test-facing contract. */
+    private class RecordingLogger : AerivaLogger {
+        val entries = mutableListOf<String>()
+
+        override fun i(tag: String, message: String) = Unit
+        override fun w(tag: String, message: String) = Unit
+
+        override fun e(tag: String, message: String, throwable: Throwable?) {
+            entries += message
+        }
+    }
+
     private class InFlightTrackingClient(private val probeMillis: Long) : NetworkClient {
         var maxInFlight = 0
             private set
@@ -833,18 +981,28 @@ class LatencyMeasurementEngineTest {
      * [NetworkClient], and [now]/[dispatchers] added as defaulted
      * parameters, so the hardening tests reuse this one factory instead
      * of building a second one. [classify] must stay the LAST parameter:
-     * existing call sites pass it as a trailing lambda. */
+     * existing call sites pass it as a trailing lambda.
+     *
+     * Phase 4 reconciliation: [logger] added, defaulted to a fresh
+     * [RecordingLogger] here -- this factory may default it because it
+     * is a test helper, not the production constructor, which has no
+     * default (Decision DD-4: a silent engine must never be constructible
+     * by accident). Most tests don't care about logging and get a
+     * throwaway recorder; tests that assert on defect entries pass their
+     * own. */
     private fun TestScope.engine(
         client: NetworkClient,
         timeoutMillis: Long = LatencyMeasurementEngine.DEFAULT_TIMEOUT_MILLIS,
         elapsedNanos: () -> Long = { 0L },
         now: () -> Instant = { Instant.EPOCH },
         dispatchers: AerivaDispatchers = TestAerivaDispatchers(StandardTestDispatcher(testScheduler)),
+        logger: AerivaLogger = RecordingLogger(),
         classify: (MeasurementCapability, Int, Set<String>) -> CapabilityClassification =
             MeasurementCapabilityClassifier::classify
     ): LatencyMeasurementEngine = LatencyMeasurementEngine(
         dispatchers = dispatchers,
         networkClient = client,
+        logger = logger,
         classify = classify,
         now = now,
         elapsedNanos = elapsedNanos,
