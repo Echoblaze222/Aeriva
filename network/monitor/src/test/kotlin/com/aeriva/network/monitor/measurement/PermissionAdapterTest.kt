@@ -96,7 +96,7 @@ class PermissionAdapterTest {
         // it re-reads whatever check() returns each time it is called,
         // which is what lets a real adapter's re-query behavior actually
         // reach the classifier.
-        val mutableStates = mutableMapOf(NETWORK_STATE to PermissionState.Denied)
+        val mutableStates = mutableMapOf<String, PermissionState>(NETWORK_STATE to PermissionState.Denied)
         val adapter = object : PermissionAdapter {
             override fun check(permission: String) = mutableStates[permission] ?: PermissionState.Denied
             override fun currentSdkInt() = 34
