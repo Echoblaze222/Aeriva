@@ -44,6 +44,12 @@ dependencies {
     implementation(project(":core:common"))
 
     implementation(libs.kotlinx.coroutines.android)
+    // AndroidPermissionAdapter's default seam calls
+    // androidx.core.content.ContextCompat.checkSelfPermission -- reusing
+    // the already-pinned, already-in-use-elsewhere (core:security)
+    // androidx.core.ktx catalog entry, not a new dependency admission.
+    // See PHASE_4_ANDROID_PERMISSION_PLATFORM_SPEC.md Section 7.
+    implementation(libs.androidx.core.ktx)
 
     testImplementation(libs.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
