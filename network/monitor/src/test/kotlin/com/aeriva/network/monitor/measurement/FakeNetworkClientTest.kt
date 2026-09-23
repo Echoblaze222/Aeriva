@@ -56,9 +56,14 @@ class FakeNetworkClientTest {
         try {
             client.probe("b")
             fail("expected an error for an unscripted call")
-        } catch (expected: IllegalStateException) {
+        } catch (expected: AssertionError) {
             // A silently-empty/default response here would hide a test
             // author's own scripting mistake -- this must fail loudly.
+            // AssertionError (an Error), not IllegalStateException/any
+            // Exception, so LatencyMeasurementEngine's catch (e:
+            // Exception) can never swallow this into Unclassified --
+            // Decision recorded in
+            // PHASE_4_ENGINE_FOUNDATION_RECONCILIATION.md Section 5.A/D.
         }
     }
 

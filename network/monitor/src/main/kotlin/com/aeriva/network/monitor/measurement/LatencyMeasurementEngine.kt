@@ -1,6 +1,7 @@
 package com.aeriva.network.monitor.measurement
 
 import com.aeriva.core.common.AerivaDispatchers
+import com.aeriva.core.logging.AerivaLogger
 import com.aeriva.core.model.measurement.DerivedLatencyStats
 import com.aeriva.core.model.measurement.LatencyMeasurement
 import com.aeriva.core.model.measurement.MeasurementFailure
@@ -10,6 +11,7 @@ import com.aeriva.network.monitor.CapabilityClassification
 import com.aeriva.network.monitor.MeasurementCapability
 import com.aeriva.network.monitor.MeasurementCapabilityClassifier
 import java.time.Instant
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -131,6 +133,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 class LatencyMeasurementEngine(
     private val dispatchers: AerivaDispatchers,
     private val networkClient: NetworkClient,
+    private val logger: AerivaLogger,
     private val classify: (MeasurementCapability, Int, Set<String>) -> CapabilityClassification =
         MeasurementCapabilityClassifier::classify,
     private val now: () -> Instant = Instant::now,
@@ -189,13 +192,45 @@ class LatencyMeasurementEngine(
             } ?: timeoutFailure(request, startedAt)
         } catch (foreign: TimeoutCancellationException) {
             // withTimeoutOrNull already consumed this engine's own
-            // deadline, so this is somebody else's timeout. If the caller
-            // itself was cancelled (its own withTimeout fired), rethrow
-            // that cancellation; otherwise the NetworkClient raised its
-            // own timeout, which is a real Timeout, not a silent
-            // cancellation.
+            // deadline (the ?: branch above; the only source of
+            // MeasurementFailure.Timeout -- Decision: only the
+            // engine-owned deadline produces Timeout(stage), see class
+            // KDoc), so a TimeoutCancellationException reaching here came
+            // from somewhere else. If the caller itself was cancelled
+            // (its own withTimeout fired), rethrow that cancellation --
+            // CancellationException stays fully transparent. Otherwise
+            // the NetworkClient leaked its own timeout instead of
+            // returning an explicit outcome: a client defect, reported as
+            // Unclassified (never as a fabricated Timeout, since Timeout
+            // is reserved for this engine's own backstop).
             currentCoroutineContext().ensureActive()
-            timeoutFailure(request, startedAt)
+            unclassified(request, startedAt, foreign, leakedTimeout = true)
+        } catch (cancellation: CancellationException) {
+            // Any other CancellationException that is not the caller's
+            // own (already rethrown by ensureActive() below if so) means
+            // some other coroutine's cancellation escaped the client.
+            // Never let it leave measure() silently -- that would look
+            // exactly like a normal caller cancellation to code further
+            // up the stack. Reported as Unclassified, same as any other
+            // unexpected exception.
+            currentCoroutineContext().ensureActive()
+            unclassified(request, startedAt, cancellation)
+        } catch (e: NonMonotonicElapsedClockException) {
+            // A clock that ran backwards during a probe is a programming
+            // error, never a negative Succeeded -- explicit outcome per
+            // Decision D5-9, same as any other Exception below. Caught
+            // separately only so its own KDoc/name stays descriptive in
+            // the resulting Unclassified(exceptionClass); behavior is
+            // identical to the catch (e: Exception) branch.
+            unclassified(request, startedAt, e)
+        } catch (e: Exception) {
+            // Any other unexpected exception -- from the client or from
+            // this engine's own processing -- becomes an explicit
+            // Unclassified outcome rather than escaping measure()
+            // uncaught (Decision D5-9). Error is deliberately never
+            // caught here: an OutOfMemoryError or similar process-level
+            // failure must not be recorded as a measurement.
+            unclassified(request, startedAt, e)
         }
 
         return LatencyMeasurementOutcome.Measured(measurement)
@@ -249,6 +284,44 @@ class LatencyMeasurementEngine(
         MeasurementFailure.Timeout(MeasurementStage.Unknown)
     )
 
+    /**
+     * Maps any unexpected [cause] to an explicit
+     * [MeasurementFailure.Unclassified] outcome and logs exactly one
+     * defect entry -- Decision D5-9 requires that [measure] never throws
+     * for any outcome except genuine caller cancellation, and a mapping
+     * with no accompanying log would be exactly the silent failure this
+     * change exists to remove.
+     *
+     * The log entry deliberately carries only [cause]'s simple class
+     * name and the request id -- never [cause]'s own message or the
+     * [Throwable] itself -- because an exception message may echo
+     * untrusted server or platform text (the same reasoning
+     * [MeasurementFailure.Unclassified]'s own KDoc gives for carrying
+     * only a class name, and [AerivaLogger]'s KDoc: "callers pass plain
+     * descriptive strings; they do not redact").
+     */
+    private fun unclassified(
+        request: LatencyMeasurementRequest,
+        startedAt: Instant,
+        cause: Throwable,
+        leakedTimeout: Boolean = false
+    ): LatencyMeasurement.Failed {
+        val exceptionClass = cause::class.simpleName ?: "Unknown"
+        val defect = if (leakedTimeout) {
+            "LatencyMeasurementEngine: NetworkClient leaked its own timeout " +
+                "($exceptionClass) instead of returning an explicit outcome " +
+                "(request=${request.id})"
+        } else {
+            "LatencyMeasurementEngine: unclassified probe failure " +
+                "($exceptionClass, request=${request.id})"
+        }
+        logger.e(TAG, defect)
+        return LatencyMeasurement.Failed(
+            request.id, request.context, startedAt, request.method,
+            MeasurementFailure.Unclassified(exceptionClass)
+        )
+    }
+
     private fun toMeasurement(
         request: LatencyMeasurementRequest,
         startedAt: Instant,
@@ -297,8 +370,10 @@ class LatencyMeasurementEngine(
         }
 
         val elapsedNanosTotal = elapsedNanos() - startNanos
-        check(elapsedNanosTotal >= 0) {
-            "elapsedNanos ran backwards during a probe ($elapsedNanosTotal ns); refusing to report a negative latency"
+        if (elapsedNanosTotal < 0) {
+            throw NonMonotonicElapsedClockException(
+                "elapsedNanos ran backwards during a probe ($elapsedNanosTotal ns); refusing to report a negative latency"
+            )
         }
         val elapsedMillis = elapsedNanosTotal / NANOS_PER_MILLI
         return LatencyMeasurement.Succeeded(
@@ -321,8 +396,20 @@ class LatencyMeasurementEngine(
         const val EXPECTED_PAYLOAD_BYTES = 8
 
         private const val NANOS_PER_MILLI = 1_000_000.0
+        private const val TAG = "LatencyMeasurementEngine"
     }
 }
+
+/**
+ * Thrown when [LatencyMeasurementEngine]'s injected `elapsedNanos` clock
+ * produces a smaller reading at the end of a probe than at its start --
+ * a programming error in whatever clock was injected, not a real
+ * measurement condition. Caught by [LatencyMeasurementEngine.measure]
+ * and mapped to [MeasurementFailure.Unclassified], never left to reach
+ * a caller as a raw [IllegalStateException] and never silently ignored
+ * to compute a negative latency.
+ */
+private class NonMonotonicElapsedClockException(message: String) : IllegalStateException(message)
 
 /**
  * One request to measure latency once. [sdkInt]/[grantedPermissions]

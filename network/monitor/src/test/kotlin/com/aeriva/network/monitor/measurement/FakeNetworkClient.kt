@@ -64,9 +64,13 @@ class FakeNetworkClient : NetworkClient {
         callCount++
         recordedTargets += target
         val scripted = scriptedCalls.removeFirstOrNull()
-            ?: error(
+            ?: throw AssertionError(
                 "FakeNetworkClient.probe(\"$target\") called more times than scripted " +
-                    "-- call count $callCount has no matching enqueue*() in this test"
+                    "-- call count $callCount has no matching enqueue*() in this test. " +
+                    "Thrown as AssertionError (an Error), not IllegalStateException, so " +
+                    "LatencyMeasurementEngine's catch (e: Exception) never swallows a " +
+                    "test-authoring mistake into Unclassified -- see this repository's " +
+                    "PHASE_4_ENGINE_FOUNDATION_RECONCILIATION.md Section 5.A."
             )
 
         var cancelled = false
