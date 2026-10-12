@@ -29,6 +29,26 @@ enum class JitterDefinition {
  * consecutive delays) is the reported statistic, alongside
  * [pdvRangeMillis] (max minus min delay over the same samples) as a
  * second, differently-shaped view per RFC 5481's own PDV formulation.
+ *
+ * "The same samples" means every [LatencyMeasurement.Succeeded] that is
+ * a member of at least one counted pair -- not only the samples that
+ * happen to start a run. A sample that ends one run of adjacency and a
+ * sample that starts the next run after a break are both members of a
+ * counted pair and are both part of [sourceMeasurementIds],
+ * [sampleCount] and the range that feeds [pdvRangeMillis]. Fixed
+ * 2026-09-22 (PHASE_4_JITTER_TEST_GATE_REPORT.md, finding F-2): an
+ * earlier version of this function only recorded the first member of
+ * the very first counted pair in the whole series, silently dropping
+ * the first member of every pair that starts a run after a break
+ * (a failed sample, a cold sample, a method change or a handle
+ * change). [method] is the method shared by the first counted pair
+ * (finding F-3; an earlier version reported the method of the first
+ * *Succeeded* sample in the series, which is not necessarily part of
+ * any counted pair at all). A series whose counted pairs span more
+ * than one method -- which [isAdjacentPair] cannot produce for a
+ * single pair, but can arise across two different runs separated by a
+ * break -- has no defined single-method label yet; that is an open
+ * decision (DP-1 in the same report), not resolved by this function.
  */
 data class DerivedJitterStats(
     val definition: JitterDefinition,
@@ -59,7 +79,15 @@ data class DerivedJitterStats(
          *   samples that share [LatencyMeasurement.method], are both
          *   warm-connection samples (per their attached [ProbeEvidence]),
          *   and have equal network handles (both null counts as equal)
-         *   are counted.
+         *   are counted. A sample whose [LatencyMeasurement.Succeeded.valueMillis]
+         *   is not finite or is negative is never treated as a real
+         *   reading and can never be part of a counted pair -- the same
+         *   numerical-edge-case rule [DerivedLatencyStats.from] already
+         *   applies (PHASE_3_NETWORK_MEASUREMENT_TEST_STRATEGY.md
+         *   Section 2, "a probe that somehow reports negative latency
+         *   should be rejected, not averaged in"; that requirement is
+         *   general to derived scoring/aggregation, not specific to
+         *   latency's own type).
          *
          * Rejects a series not in non-decreasing [LatencyMeasurement.measuredAt]
          * order as unordered evidence (returns null). Returns null when
@@ -75,12 +103,16 @@ data class DerivedJitterStats(
             }
 
             val differences = mutableListOf<Double>()
-            val delaysInValidPairs = mutableListOf<Double>()
-            val sourceIds = mutableListOf<Long>()
+            // Keyed by measurement id so every member of every counted pair is
+            // recorded exactly once, in first-seen (send) order, regardless of
+            // whether it is the first or second member of its pair and
+            // regardless of how many runs of adjacency the series contains.
+            val members = linkedMapOf<Long, Double>()
+            var pairMethod: String? = null
 
             var previous: LatencyMeasurement.Succeeded? = null
             for (measurement in series) {
-                val succeeded = measurement as? LatencyMeasurement.Succeeded
+                val succeeded = (measurement as? LatencyMeasurement.Succeeded)?.takeIf { isRealReading(it) }
                 if (succeeded == null) {
                     previous = null
                     continue
@@ -89,34 +121,33 @@ data class DerivedJitterStats(
                 val prev = previous
                 if (prev != null && isAdjacentPair(prev, succeeded)) {
                     differences += kotlin.math.abs(succeeded.valueMillis - prev.valueMillis)
-                    if (delaysInValidPairs.isEmpty()) {
-                        delaysInValidPairs += prev.valueMillis
-                        sourceIds += prev.id
-                    }
-                    delaysInValidPairs += succeeded.valueMillis
-                    sourceIds += succeeded.id
+                    members[prev.id] = prev.valueMillis
+                    members[succeeded.id] = succeeded.valueMillis
+                    if (pairMethod == null) pairMethod = prev.method
                 }
                 previous = succeeded
             }
 
             if (differences.isEmpty()) return null
 
-            val meanAbsIpdv = differences.sum() / differences.size
-            val pdvRange = (delaysInValidPairs.maxOrNull() ?: 0.0) - (delaysInValidPairs.minOrNull() ?: 0.0)
             val pairCount = differences.size
 
             return DerivedJitterStats(
                 definition = JitterDefinition.MEAN_ABS_CONSECUTIVE_DIFFERENCE,
-                method = series.first { it is LatencyMeasurement.Succeeded }.method,
-                meanAbsIpdvMillis = meanAbsIpdv,
-                pdvRangeMillis = pdvRange,
-                sampleCount = delaysInValidPairs.size,
+                method = pairMethod!!,
+                meanAbsIpdvMillis = differences.sum() / pairCount,
+                pdvRangeMillis = members.values.max() - members.values.min(),
+                sampleCount = members.size,
                 pairCount = pairCount,
-                sourceMeasurementIds = sourceIds.distinct(),
+                sourceMeasurementIds = members.keys.toList(),
                 calculatedAt = calculatedAt,
                 confidence = confidenceFor(pairCount)
             )
         }
+
+        /** Not a real latency reading if non-finite or negative -- see [from]'s own KDoc. */
+        private fun isRealReading(m: LatencyMeasurement.Succeeded): Boolean =
+            m.valueMillis.isFinite() && m.valueMillis >= 0.0
 
         private fun isAdjacentPair(
             a: LatencyMeasurement.Succeeded,
