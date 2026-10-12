@@ -6,6 +6,7 @@ import com.aeriva.core.logging.AndroidLogcatLogger
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -16,15 +17,22 @@ import org.junit.runner.RunWith
  *
  * IMPORTANT -- what this test does and does not prove: it proves the
  * monitor wires up to the real ConnectivityManager, registers/unregisters
- * its callback without crashing, and emits a [com.aeriva.core.model.NetworkState]
+ * its callback (now including `onBlockedStatusChanged`) without
+ * crashing, and emits a [com.aeriva.core.model.NetworkState]
  * reflecting whatever connectivity the device or emulator actually has at
  * test time. It does NOT exercise the transition path (Wi-Fi to cellular,
- * connect to disconnect), because that requires manually or
- * programmatically changing the device's real network state during the
- * test run, which needs a physical device or a configured emulator
- * network and is exactly the "real hardware" step the Phase 2 exit
- * criteria calls out as a separate requirement. That verification still
- * has not happened -- see the Phase 2 report.
+ * connect to disconnect, a device-policy block appearing or clearing),
+ * because that requires manually or programmatically changing the
+ * device's real network/policy state during the test run, which needs a
+ * physical device or a configured emulator network and is exactly the
+ * "real hardware" step the Phase 2 exit criteria calls out as a separate
+ * requirement. That verification still has not happened -- see the
+ * Phase 2 report. The transition, stale-state and blocked-status *fold
+ * logic* itself (what AndroidNetworkMonitor does with whatever events
+ * arrive) is covered on the plain JVM instead, in
+ * NetworkEventReducerTest -- see that file's own KDoc for why a plain
+ * JVM test can exercise the exact same decision logic this monitor runs
+ * against real android.net.Network instances.
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidNetworkMonitorInstrumentedTest {
@@ -51,5 +59,13 @@ class AndroidNetworkMonitorInstrumentedTest {
         }
 
         assertNotNull(firstState)
+        // Not a real assertion about device-policy state -- just confirms
+        // the onBlockedStatusChanged wiring produced a real, non-default-
+        // looking-by-accident boolean rather than crashing or hanging.
+        // CI/emulator runs have no reason to be blocked, so false is the
+        // expected value here, not an assumption baked into production
+        // logic (see NetworkEventReducerTest for that logic's real
+        // coverage).
+        assertFalse(firstState.blockedByDevicePolicy)
     }
 }
