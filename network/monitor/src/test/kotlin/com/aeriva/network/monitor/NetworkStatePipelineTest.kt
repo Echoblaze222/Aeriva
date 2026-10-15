@@ -360,6 +360,207 @@ class NetworkStatePipelineTest {
         assertFalse(state.blockedByDevicePolicy)
     }
 
+    // ---- G. Clock-driven coverage: folding order and changedAt -------------
+    //
+    // The tests above pass a constant clock, so they can see WHICH events
+    // reached the reducer (through the final state) but not HOW MANY times, or
+    // WHEN, the fold ran. foldNetworkStateFlow calls `now` once for the scan
+    // seed and exactly once per raw event, at fold time -- before debounce. A
+    // counting clock and a virtual-time clock make both facts observable.
+
+    @Test
+    fun countingClock_everyRawEventIsFoldedBeforeDebounce_andChangedAtIsTheLastEventsTick() = runTest {
+        var ticks = 0
+        val countingClock = { Instant.EPOCH.plusSeconds((ticks++).toLong()) }
+        val collected = mutableListOf<NetworkState>()
+        val events = flow {
+            emit(RawNetworkEvent.Available("A", wifiSnapshot))
+            emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
+            emit(RawNetworkEvent.BlockedStatusChanged("A", false))
+            delay(UPSTREAM_IDLE_MS)
+        }
+        val job = launch {
+            foldNetworkStateFlow(events, debounceMillis = 300L, now = countingClock).toList(collected)
+        }
+
+        advanceTimeBy(301)
+        runCurrent()
+        job.cancel()
+
+        // 1 seed read + 3 raw events = 4 reads. Had debounce run before the fold,
+        // only the last raw event would have reached the reducer: 2 reads.
+        assertEquals("clock must be read once for the seed and once per raw event", 4, ticks)
+        assertEquals(1, collected.size)
+        val state = collected.single()
+        assertTrue("every raw event was folded, so the real connected state is visible", state.available)
+        assertEquals(TransportType.WIFI, state.transport)
+        // Seed = tick 0; Available = 1; CapabilitiesChanged = 2; BlockedStatusChanged = 3.
+        assertEquals(Instant.EPOCH.plusSeconds(3), state.lastChangedAt)
+    }
+
+    @Test
+    fun changedAt_isWhenTheEventWasFolded_notWhenDebounceReleasedTheState() = runTest {
+        val virtualClock = { Instant.EPOCH.plusMillis(currentTime) }
+        val collected = mutableListOf<NetworkState>()
+        val meteredWifi = wifiSnapshot.copy(isNotMetered = false)
+        val events = flow {
+            emit(RawNetworkEvent.Available("A", wifiSnapshot))
+            emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
+            emit(RawNetworkEvent.BlockedStatusChanged("A", false))
+            delay(500)
+            emit(RawNetworkEvent.CapabilitiesChanged("A", meteredWifi))
+            delay(UPSTREAM_IDLE_MS)
+        }
+        val job = launch {
+            foldNetworkStateFlow(events, debounceMillis = 300L, now = virtualClock).toList(collected)
+        }
+
+        advanceTimeBy(301) // first burst folded at t=0, released by debounce at t=300
+        runCurrent()
+        assertEquals(1, collected.size)
+        assertEquals(Instant.EPOCH, collected[0].lastChangedAt)
+
+        advanceTimeBy(650) // t=951: change folded at t=500, released by debounce at t=800
+        runCurrent()
+        job.cancel()
+
+        assertEquals(2, collected.size)
+        assertTrue(collected[1].metered)
+        assertEquals(
+            "changedAt must be the t=500 fold time, not the t=800 emission time",
+            Instant.EPOCH.plusMillis(500),
+            collected[1].lastChangedAt
+        )
+    }
+
+    @Test
+    fun foreignNetworkEvents_doNotAdvanceChangedAtAndEmitNothing() = runTest {
+        val virtualClock = { Instant.EPOCH.plusMillis(currentTime) }
+        val collected = mutableListOf<NetworkState>()
+        val events = flow {
+            emit(RawNetworkEvent.Available("A", wifiSnapshot))
+            emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
+            emit(RawNetworkEvent.BlockedStatusChanged("A", false))
+            delay(500)
+            emit(RawNetworkEvent.CapabilitiesChanged("foreign", cellularSnapshot))
+            emit(RawNetworkEvent.BlockedStatusChanged("foreign", true))
+            emit(RawNetworkEvent.Lost("foreign"))
+            delay(UPSTREAM_IDLE_MS)
+        }
+        val job = launch {
+            foldNetworkStateFlow(events, debounceMillis = 300L, now = virtualClock).toList(collected)
+        }
+
+        advanceTimeBy(1200)
+        runCurrent()
+        job.cancel()
+
+        // Dropped events leave the reducer state untouched, including changedAt,
+        // so distinctUntilChanged collapses them: still exactly one emission.
+        assertEquals(1, collected.size)
+        assertEquals(Instant.EPOCH, collected.single().lastChangedAt)
+        assertEquals(TransportType.WIFI, collected.single().transport)
+    }
+
+    // ---- H. Unavailable --------------------------------------------------
+    //
+    // Contract (NetworkEventReducer): Unavailable "always resets, regardless of
+    // whatever network was previously tracked". Contract (foldNetworkStateFlow):
+    // a state with available = false is never delayed by debounce.
+
+    @Test
+    fun unavailable_afterAnEstablishedNetwork_emitsCanonicalOfflineWithoutWaitingTheDebounceWindow() = runTest {
+        val virtualClock = { Instant.EPOCH.plusMillis(currentTime) }
+        val collected = mutableListOf<NetworkState>()
+        val events = flow {
+            emit(RawNetworkEvent.Available("A", wifiSnapshot))
+            emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
+            emit(RawNetworkEvent.BlockedStatusChanged("A", false))
+            delay(500)
+            emit(RawNetworkEvent.Unavailable)
+            delay(UPSTREAM_IDLE_MS)
+        }
+        val job = launch {
+            foldNetworkStateFlow(events, debounceMillis = 300L, now = virtualClock).toList(collected)
+        }
+
+        advanceTimeBy(301)
+        runCurrent()
+        assertEquals(1, collected.size)
+        assertTrue(collected[0].available)
+
+        // Unavailable arrives at t=500. Checking at t=502, far short of another
+        // 300 ms window, proves the offline transition was not debounced.
+        advanceTimeBy(201)
+        runCurrent()
+        job.cancel()
+
+        assertEquals(2, collected.size)
+        val offline = collected[1]
+        assertFalse(offline.available)
+        assertEquals(TransportType.NONE, offline.transport)
+        assertFalse(offline.validated)
+        assertFalse(offline.metered)
+        assertTrue(offline.capabilities.isEmpty())
+        assertFalse(offline.blockedByDevicePolicy)
+        assertEquals(Instant.EPOCH.plusMillis(500), offline.lastChangedAt)
+    }
+
+    @Test
+    fun unavailable_afterABlockedNetwork_doesNotCarryTheBlockedFlagIntoOffline() = runTest {
+        val collected = mutableListOf<NetworkState>()
+        val events = flow {
+            emit(RawNetworkEvent.Available("A", wifiSnapshot))
+            emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
+            emit(RawNetworkEvent.BlockedStatusChanged("A", true))
+            delay(500)
+            emit(RawNetworkEvent.Unavailable)
+            delay(UPSTREAM_IDLE_MS)
+        }
+        val job = launch {
+            foldNetworkStateFlow(events, debounceMillis = 300L) { Instant.EPOCH }.toList(collected)
+        }
+
+        advanceTimeBy(1)
+        runCurrent()
+        // A blocked state is never debounced, so it is visible almost immediately.
+        assertEquals(1, collected.size)
+        assertTrue(collected[0].blockedByDevicePolicy)
+
+        advanceTimeBy(502)
+        runCurrent()
+        job.cancel()
+
+        assertEquals(2, collected.size)
+        assertFalse(collected[1].available)
+        assertFalse("blocked=true must not survive Unavailable", collected[1].blockedByDevicePolicy)
+    }
+
+    @Test
+    fun unavailable_asTheVeryFirstEvent_emitsCanonicalOfflineImmediately() = runTest {
+        val virtualClock = { Instant.EPOCH.plusMillis(currentTime) }
+        val collected = mutableListOf<NetworkState>()
+        val events = flow<RawNetworkEvent<String>> {
+            emit(RawNetworkEvent.Unavailable)
+            delay(UPSTREAM_IDLE_MS)
+        }
+        val job = launch {
+            foldNetworkStateFlow(events, debounceMillis = 300L, now = virtualClock).toList(collected)
+        }
+
+        advanceTimeBy(1)
+        runCurrent()
+        job.cancel()
+
+        // A real platform event always yields an observable state, even when it
+        // says "nothing is available"; only the pre-event seed is dropped.
+        assertEquals(1, collected.size)
+        val offline = collected.single()
+        assertFalse(offline.available)
+        assertEquals(TransportType.NONE, offline.transport)
+        assertFalse(offline.blockedByDevicePolicy)
+    }
+
     private companion object {
         /** Keeps each test's event flow open for its duration; never actually awaited. */
         const val UPSTREAM_IDLE_MS = 1_000_000L
