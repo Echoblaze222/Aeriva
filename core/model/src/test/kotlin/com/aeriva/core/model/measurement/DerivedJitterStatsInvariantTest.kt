@@ -328,8 +328,36 @@ class DerivedJitterStatsInvariantTest {
 
     @Test
     fun outOfOrderFailedSample_stillRejectsTheWholeSeries() {
-        val series = listOf(succeeded(1, 40.0, second = 1), failed(2, second = 9), succeeded(3, 44.0, second = 5))
-        assertNull(DerivedJitterStats.from(series, epoch))
+        // Replaces an earlier version of this test, [S1 t=1, FAIL t=9, S3 t=5], which
+        // could not tell the timestamp-order guard from its absence: the failure broke
+        // adjacency, so no pair existed either way and the result was null regardless.
+        //
+        // Here S1 and S2 are a perfectly valid, correctly ordered warm pair. Only the
+        // failed sample F3 is out of order (t=3 after S2 at t=5). With the guard
+        // removed, (S1,S2) would be counted and a non-null result returned.
+        val disordered = listOf(
+            succeeded(1, 40.0, second = 1),
+            succeeded(2, 44.0, second = 5),
+            failed(3, second = 3)
+        )
+        // Same samples, same ids and values, timestamps made non-decreasing: proves the
+        // series genuinely yields a result when order is fine, so the null below can only
+        // come from the order check.
+        val ordered = listOf(
+            succeeded(1, 40.0, second = 1),
+            succeeded(2, 44.0, second = 5),
+            failed(3, second = 9)
+        )
+
+        val orderedStats = DerivedJitterStats.from(ordered, epoch)
+        assertNotNull("control series must produce a result", orderedStats)
+        assertEquals(1, orderedStats!!.pairCount)
+        assertEquals(listOf(1L, 2L), orderedStats.sourceMeasurementIds)
+
+        assertNull(
+            "a failed sample out of timestamp order must reject the whole series",
+            DerivedJitterStats.from(disordered, epoch)
+        )
     }
 
     @Test
