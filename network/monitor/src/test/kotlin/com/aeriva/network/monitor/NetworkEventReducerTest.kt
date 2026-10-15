@@ -138,6 +138,51 @@ class NetworkEventReducerTest {
     }
 
     @Test
+    fun capabilitiesChanged_forTrackedNetwork_preservesBlockedTrue() {
+        // Platform fires onBlockedStatusChanged independently of
+        // onCapabilitiesChanged; a capabilities update must not silently
+        // forget the last-known blocked value (see NetworkEventReducer's KDoc).
+        var state: MonitorState<String> = NetworkEventReducer.reduce(
+            MonitorState.initial(t0),
+            RawNetworkEvent.Available("A", wifiSnapshot),
+            t1
+        )
+        state = NetworkEventReducer.reduce(state, RawNetworkEvent.BlockedStatusChanged("A", true), t1)
+        assertTrue("precondition: blocked before the capabilities update", state.blocked)
+
+        val afterCapabilities = NetworkEventReducer.reduce(
+            state,
+            RawNetworkEvent.CapabilitiesChanged("A", cellularSnapshot),
+            t2
+        )
+
+        assertTrue("CapabilitiesChanged must preserve blocked=true", afterCapabilities.blocked)
+        assertEquals("the snapshot is still updated", cellularSnapshot, afterCapabilities.snapshot)
+        assertEquals("A", afterCapabilities.network)
+        assertTrue(afterCapabilities.available)
+        assertEquals(t2, afterCapabilities.changedAt)
+    }
+
+    @Test
+    fun capabilitiesChanged_forTrackedNetwork_preservesBlockedFalse() {
+        val state: MonitorState<String> = NetworkEventReducer.reduce(
+            MonitorState.initial(t0),
+            RawNetworkEvent.Available("A", wifiSnapshot),
+            t1
+        )
+        assertFalse(state.blocked)
+
+        val afterCapabilities = NetworkEventReducer.reduce(
+            state,
+            RawNetworkEvent.CapabilitiesChanged("A", cellularSnapshot),
+            t2
+        )
+
+        assertFalse(afterCapabilities.blocked)
+        assertEquals(cellularSnapshot, afterCapabilities.snapshot)
+    }
+
+    @Test
     fun blockedStatusChanged_forForeignNetwork_isDropped() {
         val afterAvailable = NetworkEventReducer.reduce(
             MonitorState.initial(t0),
@@ -240,7 +285,12 @@ class NetworkEventReducerTest {
             RawNetworkEvent.Available("wifi-net", wifiSnapshot),
             t1
         )
-        state = NetworkEventReducer.reduce(state, RawNetworkEvent.BlockedStatusChanged("wifi-net", false), t1)
+        // The old network is genuinely blocked before the switch. (An earlier
+        // version of this test sent blocked=false here, so it could not tell
+        // "Available resets blocked" from "Available keeps whatever was there".)
+        state = NetworkEventReducer.reduce(state, RawNetworkEvent.BlockedStatusChanged("wifi-net", true), t1)
+        assertTrue("precondition: the previous network must be blocked", state.blocked)
+        assertEquals("wifi-net", state.network)
 
         val afterSwitch = NetworkEventReducer.reduce(
             state,
@@ -250,12 +300,24 @@ class NetworkEventReducerTest {
 
         assertEquals("cellular-net", afterSwitch.network)
         assertEquals(cellularSnapshot, afterSwitch.snapshot)
+        assertTrue(afterSwitch.available)
+        assertEquals(t2, afterSwitch.changedAt)
         // Must not retain Wi-Fi's data in any field.
         assertFalse(afterSwitch.snapshot == wifiSnapshot)
-        // Must not retain a blocked flag from the old network by accident
+        // The new network must not inherit the old network's blocked state
         // (Available always resets blocked=false; the real value for the
         // new network arrives as its own guaranteed follow-up event).
-        assertFalse(afterSwitch.blocked)
+        assertFalse("the new network must not inherit the old blocked=true", afterSwitch.blocked)
+
+        // A late blocked update still naming the old network is foreign now and
+        // must not re-block the new one.
+        val afterStaleOldNetworkBlock = NetworkEventReducer.reduce(
+            afterSwitch,
+            RawNetworkEvent.BlockedStatusChanged("wifi-net", true),
+            t2
+        )
+        assertFalse(afterStaleOldNetworkBlock.blocked)
+        assertEquals("cellular-net", afterStaleOldNetworkBlock.network)
     }
 
     @Test
@@ -265,6 +327,9 @@ class NetworkEventReducerTest {
             RawNetworkEvent.Available("cellular-net", cellularSnapshot),
             t1
         )
+        state = NetworkEventReducer.reduce(state, RawNetworkEvent.BlockedStatusChanged("cellular-net", true), t1)
+        assertTrue("precondition: the previous network must be blocked", state.blocked)
+        assertEquals("cellular-net", state.network)
 
         val afterSwitch = NetworkEventReducer.reduce(
             state,
@@ -274,6 +339,18 @@ class NetworkEventReducerTest {
 
         assertEquals("wifi-net", afterSwitch.network)
         assertEquals(wifiSnapshot, afterSwitch.snapshot)
+        assertTrue(afterSwitch.available)
+        assertEquals(t2, afterSwitch.changedAt)
+        assertFalse(afterSwitch.snapshot == cellularSnapshot)
+        assertFalse("the new network must not inherit the old blocked=true", afterSwitch.blocked)
+
+        val afterStaleOldNetworkBlock = NetworkEventReducer.reduce(
+            afterSwitch,
+            RawNetworkEvent.BlockedStatusChanged("cellular-net", true),
+            t2
+        )
+        assertFalse(afterStaleOldNetworkBlock.blocked)
+        assertEquals("wifi-net", afterStaleOldNetworkBlock.network)
     }
 
     @Test

@@ -3,11 +3,17 @@ package com.aeriva.network.monitor
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.aeriva.core.logging.AndroidLogcatLogger
+import com.aeriva.core.model.DiagnosticsStatus
+import com.aeriva.core.model.NetworkQuality
+import com.aeriva.core.model.NetworkState
+import com.aeriva.core.model.TransportType
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -33,6 +39,23 @@ import org.junit.runner.RunWith
  * NetworkEventReducerTest -- see that file's own KDoc for why a plain
  * JVM test can exercise the exact same decision logic this monitor runs
  * against real android.net.Network instances.
+ *
+ * What the assertions below deliberately do NOT assume (test-hardening
+ * tranche): that the emulator has Wi-Fi, cellular, a VPN, or validated
+ * Internet; which transport is reported; or that the first state is
+ * validated or metered. Those depend on the emulator image's network
+ * configuration and on validation timing, neither of which a CI job
+ * controls. The added assertions are limited to invariants that
+ * NetworkStateMapper guarantees for ANY connectivity (see
+ * assertInternallyConsistent), plus the register/unregister/re-register
+ * cycle. Comparing the reported transport or validation against
+ * ConnectivityManager's own view was considered and rejected: the two
+ * reads race with validation and with emulator network changes, so such a
+ * check would be flaky rather than informative. Not testable robustly in
+ * CI, and still open: any transition, loss or blocked-status path (needs a
+ * controllable network, see above), and a device that starts with no
+ * default network at all (the platform then fires no callback, so
+ * observe() emits nothing and the 10 s timeout below would fire).
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidNetworkMonitorInstrumentedTest {
@@ -67,5 +90,53 @@ class AndroidNetworkMonitorInstrumentedTest {
         // logic (see NetworkEventReducerTest for that logic's real
         // coverage).
         assertFalse(firstState.blockedByDevicePolicy)
+    }
+
+    @Test
+    fun observe_firstStateIsInternallyConsistentWhateverTheEmulatorsConnectivityIs() = runBlocking {
+        val state = firstStateFromFreshMonitor()
+
+        assertInternallyConsistent(state)
+    }
+
+    @Test
+    fun observe_canBeCollectedAgainAfterTheFirstCollectionIsCancelled() = runBlocking {
+        // first() cancels its collection, which must unregister the default network
+        // callback (awaitClose). A second, independent collection must then register
+        // again and still deliver a consistent state -- i.e. the monitor leaves nothing
+        // behind that blocks a later observer.
+        val first = firstStateFromFreshMonitor()
+        val second = firstStateFromFreshMonitor()
+
+        assertInternallyConsistent(first)
+        assertInternallyConsistent(second)
+    }
+
+    private suspend fun firstStateFromFreshMonitor(): NetworkState {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val monitor = AndroidNetworkMonitor(
+            context = context,
+            logger = AndroidLogcatLogger(debugBuild = true)
+        )
+        return withTimeout(10_000) { monitor.observe().first() }
+    }
+
+    /**
+     * Invariants NetworkStateMapper guarantees for every input, so they hold on any
+     * emulator regardless of which networks it has.
+     */
+    private fun assertInternallyConsistent(state: NetworkState) {
+        // Phase 2 never measures quality or diagnostics; no invented values.
+        assertEquals(NetworkQuality.Unavailable, state.estimatedQuality)
+        assertEquals(DiagnosticsStatus.NotAvailable, state.diagnosticsStatus)
+        if (!state.available) {
+            // Canonical offline state: nothing may be reported about an absent network.
+            assertEquals(TransportType.NONE, state.transport)
+            assertFalse(state.validated)
+            assertFalse(state.metered)
+            assertTrue(state.capabilities.isEmpty())
+            assertFalse(state.captivePortalReported)
+            assertFalse(state.vpnPresent)
+        }
     }
 }
