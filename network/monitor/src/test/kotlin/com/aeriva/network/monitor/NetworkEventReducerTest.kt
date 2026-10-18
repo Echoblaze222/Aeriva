@@ -431,4 +431,107 @@ class NetworkEventReducerTest {
 
         assertFalse(TransportType.VPN in state.snapshot!!.transports)
     }
+
+    // ------------------------------------------------------------------
+    // Contract tests with complete MonitorState equality (Agent 3).
+    //
+    // Scenarios 1-5 (per-network events from initial state, after Lost and
+    // after Unavailable) and the pipeline case live in
+    // NetworkEventReducerStaleEventTest and are deliberately not duplicated
+    // here. These tests cover the remaining required scenarios (6-10) with
+    // whole-state assertions, including changedAt, which the older
+    // field-level tests above do not check.
+    // ------------------------------------------------------------------
+
+    private val t3 = Instant.parse("2026-09-11T00:00:03Z")
+
+    private fun trackedA(): MonitorState<String> = NetworkEventReducer.reduce(
+        MonitorState.initial(t0),
+        RawNetworkEvent.Available("A", wifiSnapshot),
+        t1
+    )
+
+    // Scenario 6, reached by a direct default-network switch (the platform's
+    // documented path), so the Lost-then-Available route is not what is tested.
+    @Test
+    fun contract_eventsForA_afterBBecomesTracked_areIgnored_completeState() {
+        val trackedB = NetworkEventReducer.reduce(trackedA(), RawNetworkEvent.Available("B", cellularSnapshot), t2)
+        val expectedB = MonitorState("B", cellularSnapshot, available = true, blocked = false, changedAt = t2)
+        assertEquals("precondition", expectedB, trackedB)
+
+        val afterCapsA = NetworkEventReducer.reduce(trackedB, RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot), t3)
+        assertEquals(expectedB, afterCapsA)
+
+        val afterBlockedA = NetworkEventReducer.reduce(afterCapsA, RawNetworkEvent.BlockedStatusChanged("A", true), t3)
+        assertEquals(expectedB, afterBlockedA)
+    }
+
+    // Scenario 7
+    @Test
+    fun contract_capabilitiesChanged_forTrackedNetwork_changesOnlySnapshotAndChangedAt() {
+        val blockedA = NetworkEventReducer.reduce(trackedA(), RawNetworkEvent.BlockedStatusChanged("A", true), t1)
+
+        val after = NetworkEventReducer.reduce(blockedA, RawNetworkEvent.CapabilitiesChanged("A", cellularSnapshot), t2)
+
+        assertEquals(
+            MonitorState("A", cellularSnapshot, available = true, blocked = true, changedAt = t2),
+            after
+        )
+    }
+
+    // Scenario 8
+    @Test
+    fun contract_blockedStatusChanged_forTrackedNetwork_changesOnlyBlockedAndChangedAt() {
+        val after = NetworkEventReducer.reduce(trackedA(), RawNetworkEvent.BlockedStatusChanged("A", true), t2)
+
+        assertEquals(
+            MonitorState("A", wifiSnapshot, available = true, blocked = true, changedAt = t2),
+            after
+        )
+    }
+
+    // Scenario 9
+    @Test
+    fun contract_availableForSameNetwork_afterLost_isValidRecovery_completeState() {
+        val lost = NetworkEventReducer.reduce(trackedA(), RawNetworkEvent.Lost("A"), t2)
+
+        val recovered = NetworkEventReducer.reduce(lost, RawNetworkEvent.Available("A", wifiSnapshot), t3)
+
+        assertEquals(
+            MonitorState("A", wifiSnapshot, available = true, blocked = false, changedAt = t3),
+            recovered
+        )
+        // Per-network updates for A work again after recovery.
+        val blocked = NetworkEventReducer.reduce(recovered, RawNetworkEvent.BlockedStatusChanged("A", true), t3.plusSeconds(1))
+        assertEquals(
+            MonitorState("A", wifiSnapshot, available = true, blocked = true, changedAt = t3.plusSeconds(1)),
+            blocked
+        )
+    }
+
+    // Scenario 10, on a tracked network that is already blocked, so a leak of
+    // any foreign field (blocked, snapshot, available, network) or a changedAt
+    // bump would show up in the whole-state comparison. Includes a foreign Lost.
+    @Test
+    fun contract_ignoredEventsForForeignNetwork_preserveCompleteState_includingChangedAt() {
+        val blockedA = NetworkEventReducer.reduce(trackedA(), RawNetworkEvent.BlockedStatusChanged("A", true), t1)
+        val expected = MonitorState("A", wifiSnapshot, available = true, blocked = true, changedAt = t1)
+        assertEquals("precondition", expected, blockedA)
+
+        assertEquals(
+            "foreign CapabilitiesChanged",
+            expected,
+            NetworkEventReducer.reduce(blockedA, RawNetworkEvent.CapabilitiesChanged("B", cellularSnapshot), t3)
+        )
+        assertEquals(
+            "foreign BlockedStatusChanged(false) must not unblock A",
+            expected,
+            NetworkEventReducer.reduce(blockedA, RawNetworkEvent.BlockedStatusChanged("B", false), t3)
+        )
+        assertEquals(
+            "foreign Lost",
+            expected,
+            NetworkEventReducer.reduce(blockedA, RawNetworkEvent.Lost("B"), t3)
+        )
+    }
 }
