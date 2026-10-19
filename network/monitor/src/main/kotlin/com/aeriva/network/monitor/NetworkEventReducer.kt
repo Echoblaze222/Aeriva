@@ -219,6 +219,21 @@ internal object NetworkEventReducer {
  * it sits entirely after the reducer in the operator chain, with nothing
  * feeding back.
  *
+ * Duplicate suppression runs both before and after debounce. The one
+ * before it matters because `debounce` restarts its timeout for every
+ * upstream value, equal or not: an event the reducer ignores (for
+ * example a foreign-network event) leaves the folded state untouched, and
+ * therefore produces a mapped [NetworkState] equal to the previous one
+ * (including `lastChangedAt`, which the reducer does not advance for an
+ * ignored event). Without the first `distinctUntilChanged`, that no-op
+ * value would restart the timer and postpone the release of a pending
+ * usable state. [NetworkState] is a data class compared field by field,
+ * so a genuine event that the reducer applies always carries a new
+ * `lastChangedAt` and is never suppressed here; only truly identical
+ * consecutive values are. The one after debounce is kept because
+ * debounce can still release a value equal to the last one emitted (a
+ * pending change that is superseded by a return to the previous state).
+ *
  * Generic over the network identity type ([N]) for the same reason
  * [RawNetworkEvent] is: [AndroidNetworkMonitor] is the only caller that
  * supplies `N = android.net.Network`. A plain JVM test can drive this
@@ -256,11 +271,17 @@ internal fun <N> foldNetworkStateFlow(
             blocked = state.blocked
         )
     }
+    // A dropped/ignored event (e.g. a foreign-network event, per
+    // NetworkEventReducer's guards) makes scan emit a MonitorState equal to
+    // the previous one, which maps to an equal NetworkState. Collapse those
+    // BEFORE debounce so they cannot restart its timer. Full data-class
+    // equality is used on purpose: lastChangedAt is part of it, so any event
+    // the reducer actually applied (which sets a new changedAt) still passes.
+    .distinctUntilChanged()
     .debounce { networkState ->
         if (!networkState.available || networkState.blockedByDevicePolicy) 0L else debounceMillis
     }
-    // A dropped/ignored event (e.g. a foreign-network Lost, per
-    // NetworkEventReducer's guards) still produces a scan emission whose
-    // content is unchanged from the previous one -- collapse those
-    // rather than surface a no-op update to callers.
+    // Retained after debounce: it can still release a value equal to the
+    // last emitted one (a pending change superseded by a return to the
+    // previous state), which must not surface as a no-op update.
     .distinctUntilChanged()

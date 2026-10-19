@@ -4,6 +4,7 @@ import com.aeriva.core.model.NetworkState
 import com.aeriva.core.model.TransportType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
@@ -564,18 +565,18 @@ class NetworkStatePipelineTest {
 
     // ---- I. Ignored events and the debounce timer ----------------------------
     //
-    // foldNetworkStateFlow applies distinctUntilChanged AFTER debounce. An event
-    // the reducer ignores (a foreign-network event) still makes scan emit an
-    // unchanged MonitorState, map turns that into a NetworkState equal to the
-    // previous one, and debounce receives it as a NEW upstream value. debounce
-    // restarts its timeout for every upstream value, equal or not, so an ignored
-    // event can postpone the release of a still-usable state that is waiting out
-    // its window.
+    // foldNetworkStateFlow applies distinctUntilChanged BEFORE debounce as well as
+    // after it. An event the reducer ignores (a foreign-network event) makes scan
+    // emit an unchanged MonitorState, and map turns that into a NetworkState equal
+    // to the previous one (lastChangedAt included, because the reducer does not
+    // advance it for an ignored event). The pre-debounce distinctUntilChanged
+    // suppresses that equal value, so it never reaches debounce and cannot restart
+    // the timer of a still-usable state that is waiting out its window.
     //
-    // These tests pin that CURRENT behavior, with a control. The delayed-release
-    // test is a characterization, not an endorsement: if distinctUntilChanged is
-    // ever also applied before debounce, it is expected to flip to the control's
-    // timing and should then be updated deliberately.
+    // The control pins the baseline timing, the main test pins that an ignored event
+    // does not move the release deadline, the genuine-event test pins that the
+    // suppression does not swallow a real change that merely has equal content, and
+    // the last test pins that a real blocked transition is never delayed.
 
     @Test
     fun control_withoutAnIgnoredEvent_aPendingUsableStateIsReleasedAfterOneDebounceWindow() = runTest {
@@ -603,38 +604,89 @@ class NetworkStatePipelineTest {
     }
 
     @Test
-    fun ignoredForeignEvent_whileAUsableStateIsPending_restartsTheDebounceWindow() = runTest {
+    fun ignoredForeignEvent_whileAUsableStateIsPending_doesNotRestartTheDebounceWindow() = runTest {
         val collected = mutableListOf<NetworkState>()
+        val emittedAt = mutableListOf<Long>()
         val events = flow {
+            // t = 0: the burst that makes "A" usable; its debounce deadline is t = 300.
             emit(RawNetworkEvent.Available("A", wifiSnapshot))
             emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
             emit(RawNetworkEvent.BlockedStatusChanged("A", false))
             delay(200)
             // t = 200: ignored by the reducer (foreign network), so the folded and
-            // mapped state is unchanged, but debounce still sees a new value.
+            // mapped state is equal to the previous one and must not restart the timer.
             emit(RawNetworkEvent.CapabilitiesChanged("foreign", cellularSnapshot))
             delay(UPSTREAM_IDLE_MS)
         }
         val job = launch {
-            foldNetworkStateFlow(events, debounceMillis = 300L) { Instant.EPOCH }.toList(collected)
+            foldNetworkStateFlow(events, debounceMillis = 300L) { Instant.EPOCH }
+                .onEach { emittedAt.add(currentTime) }
+                .toList(collected)
         }
 
-        advanceTimeBy(301) // t = 301: the control releases the state by now
+        advanceTimeBy(299) // t = 299: 99 ms after the ignored event, 1 ms before the original deadline
+        runCurrent()
+        assertEquals("nothing may be released before the original deadline at t=300", 0, collected.size)
+
+        advanceTimeBy(1) // t = 300: exactly the original deadline
         runCurrent()
         assertEquals(
-            "the ignored event at t=200 restarted the window, so nothing is released at t=301",
-            0,
+            "the ignored event at t=200 must not postpone the release past t=300",
+            1,
             collected.size
         )
+        assertEquals("released exactly at the original deadline", listOf(300L), emittedAt)
+        val state = collected.single()
+        assertTrue(state.available)
+        assertEquals("the released state is still the real Wi-Fi network", TransportType.WIFI, state.transport)
 
-        advanceTimeBy(200) // t = 501: 300 ms after the ignored event at t=200
+        // The ignored event must not cause a second, duplicate emission either.
+        advanceTimeBy(1000)
         runCurrent()
         job.cancel()
 
         assertEquals(1, collected.size)
-        val state = collected.single()
-        assertTrue(state.available)
-        assertEquals("the released state is still the real Wi-Fi network", TransportType.WIFI, state.transport)
+    }
+
+    @Test
+    fun genuineSameContentEvent_withANewChangedAt_stillRestartsTheDebounceWindow() = runTest {
+        val virtualClock = { Instant.EPOCH.plusMillis(currentTime) }
+        val collected = mutableListOf<NetworkState>()
+        val emittedAt = mutableListOf<Long>()
+        val events = flow {
+            // t = 0: burst for "A", folded with changedAt = 0.
+            emit(RawNetworkEvent.Available("A", wifiSnapshot))
+            emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
+            emit(RawNetworkEvent.BlockedStatusChanged("A", false))
+            delay(200)
+            // t = 200: a REAL event for the tracked network. The reducer applies it
+            // and advances changedAt to 200, so the mapped state differs from the
+            // previous one only by lastChangedAt. It is not an ignored event and must
+            // keep the existing policy: it restarts the window (new deadline t = 500).
+            emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
+            delay(UPSTREAM_IDLE_MS)
+        }
+        val job = launch {
+            foldNetworkStateFlow(events, debounceMillis = 300L, now = virtualClock)
+                .onEach { emittedAt.add(currentTime) }
+                .toList(collected)
+        }
+
+        advanceTimeBy(499) // t = 499: past the t=300 deadline a suppressed event would have kept
+        runCurrent()
+        assertEquals("a genuine event at t=200 restarts the window", 0, collected.size)
+
+        advanceTimeBy(1) // t = 500: 300 ms after the genuine event
+        runCurrent()
+        job.cancel()
+
+        assertEquals(1, collected.size)
+        assertEquals(listOf(500L), emittedAt)
+        assertEquals(
+            "the released state carries the genuine event's changedAt",
+            Instant.EPOCH.plusMillis(200),
+            collected.single().lastChangedAt
+        )
     }
 
     @Test
