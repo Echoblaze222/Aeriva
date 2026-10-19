@@ -3,11 +3,15 @@ package com.aeriva.app
 import android.app.Application
 
 /**
- * Intentionally minimal. No UI, no DI wiring, no feature modules
- * attached yet, this module exists right now only so the project has
- * a buildable :app target while Phase 2 (Network Detection) is in
- * progress in the network:monitor / core:model modules. Screens
- * (feature modules), the AERIVA brand system, and DI composition are
- * later work, not part of this change.
+ * Process-level owner of [AppContainer]. The container is created lazily on
+ * first access (by [MainActivity.onCreate], on the main thread) so that
+ * exactly one network monitor registration exists per process regardless of
+ * how many times an Activity is created or recreated (rotation, process
+ * restore, etc.).
  */
-class AerivaApplication : Application()
+class AerivaApplication : Application() {
+
+    val container: AppContainer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AppContainer(applicationContext)
+    }
+}
