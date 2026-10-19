@@ -562,6 +562,110 @@ class NetworkStatePipelineTest {
         assertFalse(offline.blockedByDevicePolicy)
     }
 
+    // ---- I. Ignored events and the debounce timer ----------------------------
+    //
+    // foldNetworkStateFlow applies distinctUntilChanged AFTER debounce. An event
+    // the reducer ignores (a foreign-network event) still makes scan emit an
+    // unchanged MonitorState, map turns that into a NetworkState equal to the
+    // previous one, and debounce receives it as a NEW upstream value. debounce
+    // restarts its timeout for every upstream value, equal or not, so an ignored
+    // event can postpone the release of a still-usable state that is waiting out
+    // its window.
+    //
+    // These tests pin that CURRENT behavior, with a control. The delayed-release
+    // test is a characterization, not an endorsement: if distinctUntilChanged is
+    // ever also applied before debounce, it is expected to flip to the control's
+    // timing and should then be updated deliberately.
+
+    @Test
+    fun control_withoutAnIgnoredEvent_aPendingUsableStateIsReleasedAfterOneDebounceWindow() = runTest {
+        val collected = mutableListOf<NetworkState>()
+        val events = flow {
+            emit(RawNetworkEvent.Available("A", wifiSnapshot))
+            emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
+            emit(RawNetworkEvent.BlockedStatusChanged("A", false))
+            delay(UPSTREAM_IDLE_MS)
+        }
+        val job = launch {
+            foldNetworkStateFlow(events, debounceMillis = 300L) { Instant.EPOCH }.toList(collected)
+        }
+
+        advanceTimeBy(299) // t = 299: still inside the window
+        runCurrent()
+        assertEquals(0, collected.size)
+
+        advanceTimeBy(2) // t = 301: window (300) has elapsed
+        runCurrent()
+        job.cancel()
+
+        assertEquals(1, collected.size)
+        assertEquals(TransportType.WIFI, collected.single().transport)
+    }
+
+    @Test
+    fun ignoredForeignEvent_whileAUsableStateIsPending_restartsTheDebounceWindow() = runTest {
+        val collected = mutableListOf<NetworkState>()
+        val events = flow {
+            emit(RawNetworkEvent.Available("A", wifiSnapshot))
+            emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
+            emit(RawNetworkEvent.BlockedStatusChanged("A", false))
+            delay(200)
+            // t = 200: ignored by the reducer (foreign network), so the folded and
+            // mapped state is unchanged, but debounce still sees a new value.
+            emit(RawNetworkEvent.CapabilitiesChanged("foreign", cellularSnapshot))
+            delay(UPSTREAM_IDLE_MS)
+        }
+        val job = launch {
+            foldNetworkStateFlow(events, debounceMillis = 300L) { Instant.EPOCH }.toList(collected)
+        }
+
+        advanceTimeBy(301) // t = 301: the control releases the state by now
+        runCurrent()
+        assertEquals(
+            "the ignored event at t=200 restarted the window, so nothing is released at t=301",
+            0,
+            collected.size
+        )
+
+        advanceTimeBy(200) // t = 501: 300 ms after the ignored event at t=200
+        runCurrent()
+        job.cancel()
+
+        assertEquals(1, collected.size)
+        val state = collected.single()
+        assertTrue(state.available)
+        assertEquals("the released state is still the real Wi-Fi network", TransportType.WIFI, state.transport)
+    }
+
+    @Test
+    fun ignoredForeignEvent_doesNotDelayARealBlockedTransition() = runTest {
+        val collected = mutableListOf<NetworkState>()
+        val events = flow {
+            emit(RawNetworkEvent.Available("A", wifiSnapshot))
+            emit(RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot))
+            emit(RawNetworkEvent.BlockedStatusChanged("A", false))
+            delay(200)
+            emit(RawNetworkEvent.CapabilitiesChanged("foreign", cellularSnapshot)) // t = 200, ignored
+            delay(50)
+            emit(RawNetworkEvent.BlockedStatusChanged("A", true)) // t = 250, real and never debounced
+            delay(UPSTREAM_IDLE_MS)
+        }
+        val job = launch {
+            foldNetworkStateFlow(events, debounceMillis = 300L) { Instant.EPOCH }.toList(collected)
+        }
+
+        advanceTimeBy(251) // t = 251
+        runCurrent()
+        job.cancel()
+
+        // Only still-usable chatter is ever postponed. A real failure transition is
+        // released immediately and supersedes the pending usable state.
+        assertEquals(1, collected.size)
+        val state = collected.single()
+        assertTrue(state.available)
+        assertTrue(state.blockedByDevicePolicy)
+    }
+
     private companion object {
         /** Keeps each test's event flow open for its duration; never actually awaited. */
         const val UPSTREAM_IDLE_MS = 1_000_000L
