@@ -153,7 +153,12 @@ internal object NetworkEventReducer {
                 )
 
             is RawNetworkEvent.CapabilitiesChanged ->
-                if (state.network != null && event.network != state.network) {
+                // Only Available may establish a tracked network. When no
+                // network is tracked (state.network == null: initial state,
+                // after Lost, after Unavailable) a per-network event cannot
+                // equal state.network, so a stale event for an already-lost
+                // network is dropped here instead of resurrecting it.
+                if (event.network != state.network) {
                     state
                 } else {
                     state.copy(
@@ -165,7 +170,10 @@ internal object NetworkEventReducer {
                 }
 
             is RawNetworkEvent.BlockedStatusChanged ->
-                if (state.network != null && event.network != state.network) {
+                // Same strict-match guard as CapabilitiesChanged above: a
+                // stale blocked-status event must not write `blocked` into
+                // the canonical offline state.
+                if (event.network != state.network) {
                     state
                 } else {
                     state.copy(blocked = event.blocked, changedAt = changedAt)
