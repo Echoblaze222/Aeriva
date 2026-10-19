@@ -124,6 +124,57 @@ class NetworkEventReducerStaleEventTest {
         assertCanonicalOffline(after, t2)
     }
 
+    // ---- Reverse-order stale events after Lost ------------------------
+
+    /**
+     * Available(A) -> Lost(A) -> stale BlockedStatusChanged(A, true) ->
+     * stale CapabilitiesChanged(A, ...), in that (blocked-first) order,
+     * chained so each step feeds the next. Asserts the complete state after
+     * every step -- not only the fields the defect touched -- so a stale
+     * blocked=true leaking into the offline state, a resurrected network or
+     * snapshot, or any changedAt bump fails here. The final Available(A)
+     * shows recovery is unaffected and that the stale blocked=true did not
+     * survive into it. Also serves as the reducer-level combined test of
+     * both stale events after Lost(A): the pipeline test below covers the
+     * opposite (capabilities-first) order at flow level, and each ignored
+     * event returns the state unchanged, so no further chained permutation
+     * adds regression value.
+     */
+    @Test
+    fun staleBlockedThenStaleCapabilities_afterLost_leaveCompleteOfflineStateUnchanged() {
+        val lost = afterLostA()
+        val expectedOffline = MonitorState<String>(
+            network = null,
+            snapshot = null,
+            available = false,
+            blocked = false,
+            changedAt = t2
+        )
+        assertEquals("precondition: Lost(A) yields canonical offline at t2", expectedOffline, lost)
+
+        val afterStaleBlocked = NetworkEventReducer.reduce(lost, RawNetworkEvent.BlockedStatusChanged("A", true), t3)
+        assertEquals("stale blocked-status must not corrupt the offline state", expectedOffline, afterStaleBlocked)
+
+        val afterStaleCapabilities = NetworkEventReducer.reduce(
+            afterStaleBlocked,
+            RawNetworkEvent.CapabilitiesChanged("A", wifiSnapshot),
+            t3.plusSeconds(1)
+        )
+        assertEquals("stale capabilities must not resurrect A", expectedOffline, afterStaleCapabilities)
+        assertEquals("neither stale event may move changedAt", t2, afterStaleCapabilities.changedAt)
+
+        val recovered = NetworkEventReducer.reduce(
+            afterStaleCapabilities,
+            RawNetworkEvent.Available("A", wifiSnapshot),
+            t3.plusSeconds(2)
+        )
+        assertEquals(
+            "recovery via Available(A) still works and starts unblocked",
+            MonitorState("A", wifiSnapshot, available = true, blocked = false, changedAt = t3.plusSeconds(2)),
+            recovered
+        )
+    }
+
     // ---- After Unavailable --------------------------------------------
 
     @Test
