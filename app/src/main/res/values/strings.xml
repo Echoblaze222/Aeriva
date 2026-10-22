@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AERIVA</string>
+    <string name="home_title">Connection</string>
+    <string name="brand_tagline">Stay connected. Use less. Go further.</string>
+    <string name="details_title">DETAILS</string>
+
+    <string name="status_initializing_headline">Checking connection…</string>
+    <string name="status_initializing_message">Waiting for the first report from Android.</string>
+
+    <string name="status_no_network_reported_headline">No network reported</string>
+    <string name="status_no_network_reported_message">Android hasn\'t reported a network yet. Connect to Wi-Fi or mobile data and this screen updates automatically.</string>
+
+    <string name="status_offline_headline">Offline</string>
+    <string name="status_offline_message">No network is available right now. This screen updates automatically when a connection returns.</string>
+
+    <string name="status_blocked_headline">Connection blocked</string>
+    <string name="status_blocked_message">A device policy is blocking this network connection.</string>
+
+    <string name="status_connected_headline">Connected</string>
+    <string name="status_connected_message">Android\'s connectivity check passed on this network. That doesn\'t guarantee every app or service is reachable.</string>
+
+    <string name="status_limited_headline">Connected, internet not confirmed</string>
+    <string name="status_limited_message">A network is connected, but Android hasn\'t confirmed that it provides internet access.</string>
+
+    <string name="status_signin_headline">Sign-in required</string>
+    <string name="status_signin_message">This network reported a sign-in page. Open it to finish connecting.</string>
+
+    <string name="detail_network_type">Network type</string>
+    <string name="detail_internet_check">Internet check</string>
+    <string name="detail_data_cost">Data</string>
+    <string name="detail_vpn">VPN</string>
+    <string name="detail_device_policy">Device policy</string>
+
+    <string name="transport_wifi">Wi-Fi</string>
+    <string name="transport_cellular">Mobile data</string>
+    <string name="transport_ethernet">Ethernet</string>
+    <string name="transport_vpn">VPN</string>
+    <string name="transport_other">Other</string>
+    <string name="transport_not_reported">Not reported</string>
+
+    <string name="value_internet_validated">Validated by Android</string>
+    <string name="value_internet_not_validated">Not confirmed</string>
+    <string name="value_internet_captive_portal">Sign-in page reported</string>
+    <string name="value_metered">Metered</string>
+    <string name="value_not_metered">Not metered</string>
+    <string name="value_vpn_active">Active</string>
+    <string name="value_policy_blocking">Blocking connectivity</string>
+</resources>

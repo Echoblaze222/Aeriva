@@ -17,6 +17,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     compileOptions {
@@ -37,8 +38,24 @@ kotlin {
     }
 }
 
+// Milestone 1 wiring: :app now consumes the existing network monitor
+// through ConnectionStateRepository (see AppContainer). No new third-party
+// library is introduced -- every entry below is an existing project module
+// or an already-pinned catalog entry. The UI uses the platform View system
+// (no Compose / AppCompat / lifecycle-runtime artifacts are in the version
+// catalog, and admitting them is a separate dependency-governance decision).
 dependencies {
-    // Feature modules attach here as they're built. Nothing wired yet --
-    // :app does not consume network:monitor or core:model directly, that
-    // is feature-module work per architecture doc Section 4.
+    implementation(project(":network:monitor"))
+    // network:monitor declares core:model and core:logging as
+    // `implementation`, so they are not transitively visible here.
+    implementation(project(":core:model"))
+    implementation(project(":core:logging"))
+    implementation(libs.kotlinx.coroutines.android)
+
+    testImplementation(libs.junit4)
+    testImplementation(libs.kotlinx.coroutines.test)
+
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
 }

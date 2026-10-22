@@ -22,11 +22,23 @@ internal object NetworkStateMapper {
      * @param snapshot capability data for the current default network,
      *   or null if [available] is false or capabilities have not arrived
      *   yet.
+     * @param blocked the platform's own blocked-status for this app on
+     *   this network (`NetworkCallback.onBlockedStatusChanged`), per
+     *   PHASE_4_CROSS_CUTTING_TECHNICAL_DECISION_CONTRACT.md Decision
+     *   D4-8. [AndroidNetworkMonitor] now tracks and passes the real,
+     *   current value (folded across events by [NetworkEventReducer],
+     *   since `onBlockedStatusChanged` fires independently of
+     *   `onCapabilitiesChanged` and the last-known value must survive a
+     *   capabilities-only update). Defaults to `false` here only for
+     *   callers that have no blocked-status signal at all (e.g. the
+     *   canonical offline/no-network case, and this function's own unit
+     *   tests).
      */
     fun buildNetworkState(
         available: Boolean,
         snapshot: RawCapabilitiesSnapshot?,
-        changedAt: Instant
+        changedAt: Instant,
+        blocked: Boolean = false
     ): NetworkState {
         if (!available || snapshot == null) {
             return NetworkState(
@@ -37,7 +49,10 @@ internal object NetworkStateMapper {
                 capabilities = emptySet(),
                 estimatedQuality = NetworkQuality.Unavailable,
                 diagnosticsStatus = DiagnosticsStatus.NotAvailable,
-                lastChangedAt = changedAt
+                lastChangedAt = changedAt,
+                captivePortalReported = false,
+                vpnPresent = false,
+                blockedByDevicePolicy = blocked
             )
         }
 
@@ -52,7 +67,12 @@ internal object NetworkStateMapper {
             // invent a value here; see architecture doc Section 6.
             estimatedQuality = NetworkQuality.Unavailable,
             diagnosticsStatus = DiagnosticsStatus.NotAvailable,
-            lastChangedAt = changedAt
+            lastChangedAt = changedAt,
+            // Both computed from data the snapshot already carries --
+            // no new RawCapabilitiesSnapshot field needed (Decision D4-8).
+            captivePortalReported = CAPTIVE_PORTAL_CAPABILITY_NAME in snapshot.rawCapabilityNames,
+            vpnPresent = TransportType.VPN in snapshot.transports,
+            blockedByDevicePolicy = blocked
         )
     }
 
@@ -65,6 +85,11 @@ internal object NetworkStateMapper {
      * user's effective connection. Ethernet before Wi-Fi before Cellular
      * follows general specificity/reliability ordering. Documented here
      * because NetworkCapabilities does not itself define a priority.
+     *
+     * [NetworkState.vpnPresent] exists precisely so this VPN-first
+     * display priority no longer means "is a VPN involved" is
+     * unanswerable when it isn't the reported transport -- see that
+     * field's own KDoc.
      */
     private fun resolveTransport(transports: Set<TransportType>): TransportType = when {
         TransportType.VPN in transports -> TransportType.VPN
@@ -74,4 +99,10 @@ internal object NetworkStateMapper {
         TransportType.OTHER in transports -> TransportType.OTHER
         else -> TransportType.NONE
     }
+
+    // Matches AndroidNetworkMonitor's NAMED_CAPABILITIES_OF_INTEREST entry
+    // for NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL -- kept as a
+    // named constant here rather than a magic string repeated at each
+    // call site.
+    private const val CAPTIVE_PORTAL_CAPABILITY_NAME = "CAPTIVE_PORTAL"
 }

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand palette: Black / Silver / Ice Blue. -->
+    <color name="aeriva_black">#FF000000</color>
+    <color name="aeriva_surface">#FF0E1114</color>
+    <color name="aeriva_surface_stroke">#FF1E242B</color>
+    <color name="aeriva_white">#FFF4F6F8</color>
+    <color name="aeriva_silver">#FFB4BBC5</color>
+    <color name="aeriva_ice_blue">#FF8FD3FF</color>
+    <!-- State indicator colors (not brand colors). -->
+    <color name="aeriva_warning">#FFF2B84B</color>
+    <color name="aeriva_offline">#FFFF7A7A</color>
+    <color name="aeriva_unknown">#FF8A9099</color>
+</resources>

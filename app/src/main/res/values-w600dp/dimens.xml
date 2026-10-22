@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Wide screens (tablets, unfolded foldables): keep the content column readable. -->
+    <dimen name="screen_padding_horizontal">120dp</dimen>
+</resources>

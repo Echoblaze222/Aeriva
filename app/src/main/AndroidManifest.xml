@@ -1,16 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+      No permissions are declared here on purpose. ACCESS_NETWORK_STATE (a
+      normal, install-time permission) is declared by :network:monitor's own
+      manifest and merged in; nothing else is needed to read connection
+      state. No location, no INTERNET.
+    -->
+
     <application
         android:name=".AerivaApplication"
         android:allowBackup="false"
-        android:label="AERIVA">
-        <!--
-          No launcher activity yet. Screens are feature-module work
-          (architecture doc Section 4, feature/*) that hasn't started.
-          This manifest exists so :app is buildable during Phase 2, not
-          so the app is installable/launchable yet.
-        -->
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Aeriva">
+
+        <!-- The only exported component: the launcher entry point. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
     </application>
 
 </manifest>

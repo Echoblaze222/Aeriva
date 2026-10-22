@@ -14,6 +14,17 @@ import java.time.Instant
  * so a failed probe can never be misread as "succeeded with a low
  * value" -- see the design doc's Section 12 on why this must be
  * enforced at the type level, not by convention.
+ *
+ * [evidence] was added in Phase 4 per
+ * PHASE_4_CROSS_CUTTING_TECHNICAL_DECISION_CONTRACT.md Decision D4-1 --
+ * a trailing, optional [ProbeEvidence] so existing positional
+ * constructor call sites (the Phase 3B engine's own `toMeasurement`)
+ * keep compiling unchanged. It is null wherever a client has not yet
+ * been migrated to attach it, and is expected to always be present once
+ * a production client does (Decision D3-1). [DerivedJitterStats.from]
+ * reads [evidence]`.connectionState` to decide pair adjacency, so a
+ * `null` evidence value means that sample can never be paired for
+ * jitter, not that it is silently treated as cold or warm.
  */
 sealed interface LatencyMeasurement {
 
@@ -28,7 +39,8 @@ sealed interface LatencyMeasurement {
         override val measuredAt: Instant,
         override val method: String,
         val valueMillis: Double,
-        val sampleCount: Int
+        val sampleCount: Int,
+        val evidence: ProbeEvidence? = null
     ) : LatencyMeasurement
 
     data class Failed(
@@ -36,6 +48,7 @@ sealed interface LatencyMeasurement {
         override val context: MeasurementNetworkContext,
         override val measuredAt: Instant,
         override val method: String,
-        val failure: MeasurementFailure
+        val failure: MeasurementFailure,
+        val evidence: ProbeEvidence? = null
     ) : LatencyMeasurement
 }

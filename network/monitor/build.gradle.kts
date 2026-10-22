@@ -35,11 +35,31 @@ kotlin {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:logging"))
+    // Phase 3B measurement engine: LatencyMeasurementEngine (src/main)
+    // uses AerivaDispatchers directly in production code -- a real
+    // main-source-set dependency, distinct from the testImplementation
+    // below (which exists only for AI 4's test-only
+    // ReferenceLatencyProbeExecutor and does not reach this module's
+    // production classpath).
+    implementation(project(":core:common"))
 
     implementation(libs.kotlinx.coroutines.android)
+    // AndroidPermissionAdapter's default seam calls
+    // androidx.core.content.ContextCompat.checkSelfPermission -- reusing
+    // the already-pinned, already-in-use-elsewhere (core:security)
+    // androidx.core.ktx catalog entry, not a new dependency admission.
+    // See PHASE_4_ANDROID_PERMISSION_PLATFORM_SPEC.md Section 7.
+    implementation(libs.androidx.core.ktx)
 
     testImplementation(libs.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Phase 3B measurement tests: AerivaDispatchers is the existing,
+    // repo-wide dispatcher seam (PHASE_3_NETWORK_MEASUREMENT_TEST_STRATEGY.md
+    // Section 1) -- ReferenceLatencyProbeExecutor depends on it instead
+    // of inventing a second seam. Test-only: neither dependency reaches
+    // this module's main source set or production classpath.
+    testImplementation(project(":core:common"))
+    testImplementation(testFixtures(project(":core:common")))
 
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.test.core)
