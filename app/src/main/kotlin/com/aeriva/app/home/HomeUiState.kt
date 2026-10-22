@@ -31,7 +31,8 @@ sealed interface HomeUiState {
     /** A network exists but device policy blocks it. */
     data class Blocked(
         val transport: TransportType,
-        val vpnPresent: Boolean
+        val vpnPresent: Boolean,
+        val vpnUnderlyingTransport: TransportType = TransportType.NONE
     ) : HomeUiState
 
     /**
@@ -43,7 +44,8 @@ sealed interface HomeUiState {
         val transport: TransportType,
         val internet: InternetStatus,
         val metered: Boolean,
-        val vpnPresent: Boolean
+        val vpnPresent: Boolean,
+        val vpnUnderlyingTransport: TransportType = TransportType.NONE
     ) : HomeUiState
 }
 
@@ -64,7 +66,8 @@ fun NetworkState.toHomeUiState(): HomeUiState = when {
 
     blockedByDevicePolicy -> HomeUiState.Blocked(
         transport = transport,
-        vpnPresent = vpnPresent
+        vpnPresent = vpnPresent,
+        vpnUnderlyingTransport = vpnUnderlyingTransport
     )
 
     else -> HomeUiState.Connected(
@@ -75,6 +78,7 @@ fun NetworkState.toHomeUiState(): HomeUiState = when {
             else -> InternetStatus.NOT_VALIDATED
         },
         metered = metered,
-        vpnPresent = vpnPresent
+        vpnPresent = vpnPresent,
+        vpnUnderlyingTransport = vpnUnderlyingTransport
     )
 }

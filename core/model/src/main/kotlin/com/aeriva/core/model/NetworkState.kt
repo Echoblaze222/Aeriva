@@ -44,6 +44,16 @@ import java.time.Instant
  * of Phase 4's engine/foundation reconciliation -- see
  * PHASE_4_ENGINE_FOUNDATION_RECONCILIATION.md Section 7.1 and
  * PHASE_4_ENGINE_FOUNDATION_INTEGRATION_NOTES.md).
+ *
+ * [vpnUnderlyingTransport] is the one field that DOES have a default, on
+ * purpose: its default, [TransportType.NONE], means "no single underlying
+ * transport reported", which is exactly the honest value for every state
+ * where it cannot be known (no VPN, a VPN whose underlying networks Android
+ * does not report, or several underlying transports at once). There is no
+ * distinct "not observed" case it could hide. It is only ever set when
+ * [vpnPresent] is true and Android reports exactly one non-VPN transport
+ * alongside the VPN transport on the same network. It describes what
+ * Android reported; it does not mean the underlying network was tested.
  */
 data class NetworkState(
     val transport: TransportType,
@@ -56,7 +66,8 @@ data class NetworkState(
     val lastChangedAt: Instant,
     val captivePortalReported: Boolean,
     val vpnPresent: Boolean,
-    val blockedByDevicePolicy: Boolean
+    val blockedByDevicePolicy: Boolean,
+    val vpnUnderlyingTransport: TransportType = TransportType.NONE
 ) {
     companion object {
         /** State before the monitor has produced its first real reading. */

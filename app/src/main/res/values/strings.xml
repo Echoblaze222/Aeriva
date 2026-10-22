@@ -27,6 +27,7 @@
     <string name="status_signin_message">This network reported a sign-in page. Open it to finish connecting.</string>
 
     <string name="detail_network_type">Network type</string>
+    <string name="detail_underlying_network">Underlying network</string>
     <string name="detail_internet_check">Internet check</string>
     <string name="detail_data_cost">Data</string>
     <string name="detail_vpn">VPN</string>

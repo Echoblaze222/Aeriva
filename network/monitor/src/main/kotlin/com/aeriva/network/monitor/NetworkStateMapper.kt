@@ -72,8 +72,26 @@ internal object NetworkStateMapper {
             // no new RawCapabilitiesSnapshot field needed (Decision D4-8).
             captivePortalReported = CAPTIVE_PORTAL_CAPABILITY_NAME in snapshot.rawCapabilityNames,
             vpnPresent = TransportType.VPN in snapshot.transports,
-            blockedByDevicePolicy = blocked
+            blockedByDevicePolicy = blocked,
+            vpnUnderlyingTransport = resolveVpnUnderlyingTransport(snapshot.transports)
         )
+    }
+
+    /**
+     * Android merges the transports of a VPN's underlying network(s) into
+     * the VPN network's own capabilities, so a VPN over Wi-Fi reports
+     * {VPN, WIFI} (developer.android.com, "Read network state"). The
+     * underlying transport is reported only when that is unambiguous:
+     * a VPN plus exactly one other transport. With no other transport
+     * (underlying network not reported) or several (e.g. Wi-Fi and
+     * cellular), the answer is [TransportType.NONE] ("not reported")
+     * rather than a guess from [resolveTransport]'s display priority.
+     * Without a VPN there is no underlying transport to report.
+     */
+    private fun resolveVpnUnderlyingTransport(transports: Set<TransportType>): TransportType {
+        if (TransportType.VPN !in transports) return TransportType.NONE
+        return (transports - TransportType.VPN - TransportType.NONE)
+            .singleOrNull() ?: TransportType.NONE
     }
 
     /**

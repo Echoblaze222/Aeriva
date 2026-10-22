@@ -55,13 +55,13 @@ fun HomeUiState.detailRows(): List<DetailRow> = when (this) {
     HomeUiState.Offline -> emptyList()
 
     is HomeUiState.Blocked -> buildList {
-        add(DetailRow(R.string.detail_network_type, transport.labelRes()))
+        add(networkTypeRow(transport, vpnPresent, vpnUnderlyingTransport))
         add(DetailRow(R.string.detail_device_policy, R.string.value_policy_blocking))
         if (vpnPresent) add(DetailRow(R.string.detail_vpn, R.string.value_vpn_active))
     }
 
     is HomeUiState.Connected -> buildList {
-        add(DetailRow(R.string.detail_network_type, transport.labelRes()))
+        add(networkTypeRow(transport, vpnPresent, vpnUnderlyingTransport))
         add(
             DetailRow(
                 R.string.detail_internet_check,
@@ -81,6 +81,25 @@ fun HomeUiState.detailRows(): List<DetailRow> = when (this) {
         if (vpnPresent) add(DetailRow(R.string.detail_vpn, R.string.value_vpn_active))
     }
 }
+
+/**
+ * With a VPN the default network's transport is VPN, which hides what the
+ * VPN runs over. The row is then labelled as the underlying network and shows
+ * only what Android reported for it (Wi-Fi, mobile data, ...), or "Not
+ * reported" when Android did not give a single underlying transport. It is
+ * never guessed, and it is not a claim that the underlying network was tested.
+ */
+private fun networkTypeRow(
+    transport: TransportType,
+    vpnPresent: Boolean,
+    vpnUnderlyingTransport: TransportType
+): DetailRow =
+    if (vpnPresent) {
+        val shown = if (transport == TransportType.VPN) vpnUnderlyingTransport else transport
+        DetailRow(R.string.detail_underlying_network, shown.labelRes())
+    } else {
+        DetailRow(R.string.detail_network_type, transport.labelRes())
+    }
 
 private fun TransportType.labelRes(): Int = when (this) {
     TransportType.WIFI -> R.string.transport_wifi

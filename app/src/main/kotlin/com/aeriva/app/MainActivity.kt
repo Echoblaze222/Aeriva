@@ -57,10 +57,11 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
-        val homeState = (application as AerivaApplication).container.homeState
+        val app = application as AerivaApplication
+        val uiState = app.uiStateOverride ?: app.container.homeState.uiState
         collectJob?.cancel()
         collectJob = uiScope.launch {
-            homeState.uiState.collect { render(it) }
+            uiState.collect { render(it) }
         }
     }
 

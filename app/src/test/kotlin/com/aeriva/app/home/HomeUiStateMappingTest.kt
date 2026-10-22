@@ -1,10 +1,12 @@
 package com.aeriva.app.home
 
+import com.aeriva.app.R
 import com.aeriva.core.model.DiagnosticsStatus
 import com.aeriva.core.model.NetworkQuality
 import com.aeriva.core.model.NetworkState
 import com.aeriva.core.model.TransportType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
 
@@ -24,7 +26,8 @@ class HomeUiStateMappingTest {
         metered: Boolean = false,
         captivePortal: Boolean = false,
         vpn: Boolean = false,
-        blocked: Boolean = false
+        blocked: Boolean = false,
+        vpnUnderlying: TransportType = TransportType.NONE
     ) = NetworkState(
         transport = transport,
         available = true,
@@ -36,7 +39,8 @@ class HomeUiStateMappingTest {
         lastChangedAt = at,
         captivePortalReported = captivePortal,
         vpnPresent = vpn,
-        blockedByDevicePolicy = blocked
+        blockedByDevicePolicy = blocked,
+        vpnUnderlyingTransport = vpnUnderlying
     )
 
     private val offline = NetworkState(
@@ -110,5 +114,63 @@ class HomeUiStateMappingTest {
         val ui = online(transport = TransportType.NONE).toHomeUiState() as HomeUiState.Connected
 
         assertEquals(TransportType.NONE, ui.transport)
+    }
+
+    @Test
+    fun vpnOverWifi_showsUnderlyingNetworkRow_andVpnRow() {
+        val ui = online(transport = TransportType.VPN, vpn = true, vpnUnderlying = TransportType.WIFI)
+            .toHomeUiState()
+
+        val rows = ui.detailRows()
+        assertTrue(DetailRow(R.string.detail_underlying_network, R.string.transport_wifi) in rows)
+        assertTrue(DetailRow(R.string.detail_vpn, R.string.value_vpn_active) in rows)
+        assertTrue(rows.none { it.value == R.string.transport_vpn })
+    }
+
+    @Test
+    fun vpnOverCellular_showsMobileDataAsUnderlying() {
+        val rows = online(transport = TransportType.VPN, vpn = true, vpnUnderlying = TransportType.CELLULAR)
+            .toHomeUiState().detailRows()
+
+        assertTrue(DetailRow(R.string.detail_underlying_network, R.string.transport_cellular) in rows)
+    }
+
+    @Test
+    fun vpnWithUnknownUnderlying_saysNotReported_insteadOfGuessing() {
+        val rows = online(transport = TransportType.VPN, vpn = true).toHomeUiState().detailRows()
+
+        assertTrue(DetailRow(R.string.detail_underlying_network, R.string.transport_not_reported) in rows)
+        assertTrue(DetailRow(R.string.detail_vpn, R.string.value_vpn_active) in rows)
+    }
+
+    @Test
+    fun vpnStatus_isShownAlongsideInternetCheck_forNotValidated() {
+        val rows = online(
+            transport = TransportType.VPN, vpn = true, validated = false,
+            vpnUnderlying = TransportType.WIFI
+        ).toHomeUiState().detailRows()
+
+        assertTrue(DetailRow(R.string.detail_internet_check, R.string.value_internet_not_validated) in rows)
+        assertTrue(DetailRow(R.string.detail_vpn, R.string.value_vpn_active) in rows)
+    }
+
+    @Test
+    fun blockedVpn_showsUnderlyingAndPolicyRows() {
+        val rows = online(
+            transport = TransportType.VPN, vpn = true, blocked = true,
+            vpnUnderlying = TransportType.WIFI
+        ).toHomeUiState().detailRows()
+
+        assertTrue(DetailRow(R.string.detail_underlying_network, R.string.transport_wifi) in rows)
+        assertTrue(DetailRow(R.string.detail_device_policy, R.string.value_policy_blocking) in rows)
+    }
+
+    @Test
+    fun nonVpnConnection_keepsPlainNetworkTypeRow_andNoVpnRow() {
+        val rows = online(transport = TransportType.WIFI).toHomeUiState().detailRows()
+
+        assertTrue(DetailRow(R.string.detail_network_type, R.string.transport_wifi) in rows)
+        assertTrue(rows.none { it.label == R.string.detail_underlying_network })
+        assertTrue(rows.none { it.label == R.string.detail_vpn })
     }
 }
