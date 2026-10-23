@@ -74,22 +74,25 @@ class RecommendationGateTest {
     @Test
     fun customConfig_isHonored() {
         val clock = clock()
-        val gate = gate(clock, AdvisorTimingConfig(dwell = Duration.ofSeconds(2), cooldown = Duration.ofSeconds(3)))
+        val gate = gate(clock, AdvisorTimingConfig(dwell = Duration.ofSeconds(2), cooldown = Duration.ofSeconds(5)))
         val rec = recommend()
 
         assertEquals(NoRecommendationReason.CONDITION_NOT_STABLE_YET, reasonOf(gate.update(rec)))
         clock.atSeconds(2)
         assertEquals(rec, gate.update(rec))
+
+        // Withdrawn at 3 seconds, so the 5 second cooldown ends at 8 seconds.
         clock.atSeconds(3)
         gate.update(noRecommendation)
+
+        // The condition returns at 4 seconds and has held for the 2 second dwell by 6 seconds.
         clock.atSeconds(4)
         gate.update(rec)
         clock.atSeconds(6)
         assertEquals(NoRecommendationReason.RECENTLY_SHOWN, reasonOf(gate.update(rec)))
-        clock.atSeconds(6)
-        clock.atMillis(5_999)
+        clock.atMillis(7_999)
         assertEquals(NoRecommendationReason.RECENTLY_SHOWN, reasonOf(gate.update(rec)))
-        clock.atMillis(6_000)
+        clock.atMillis(8_000)
         assertEquals(rec, gate.update(rec))
     }
 
