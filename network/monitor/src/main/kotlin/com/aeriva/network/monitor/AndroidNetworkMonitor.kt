@@ -6,11 +6,10 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import com.aeriva.core.logging.AerivaLogger
 import com.aeriva.core.model.NetworkState
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.map
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * [NetworkMonitor] backed by [ConnectivityManager.registerDefaultNetworkCallback],
@@ -65,57 +64,69 @@ class AndroidNetworkMonitor(
     private val connectivityManager =
         context.applicationContext.getSystemService(ConnectivityManager::class.java)
 
+    private val sendFailures = AtomicLong(0)
+
+    /**
+     * How many platform events were rejected by the callback channel since
+     * this monitor was created (a full buffer). Zero is the expected value.
+     * A rejected event is dropped, never retried, so a non-zero count means
+     * the reported state may be stale until the next complete `Available`
+     * burst. See NETWORK_MONITOR_RELIABILITY_SEAM_REPORT.md, risks R1 to R3.
+     * Closed-channel rejections after cancellation are not counted.
+     */
+    val droppedEventCount: Long
+        get() = sendFailures.get()
+
     override fun observe(): Flow<NetworkState> = foldNetworkStateFlow(
         events = platformEvents().map(::toRawNetworkEvent),
         debounceMillis = debounceMillis,
         now = now
     )
 
-    private fun platformEvents(): Flow<PlatformEvent> = callbackFlow {
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                trySend(PlatformEvent.Available(network))
-            }
-
-            override fun onCapabilitiesChanged(
-                network: Network,
-                capabilities: NetworkCapabilities
-            ) {
-                trySend(PlatformEvent.CapabilitiesChanged(network, capabilities))
-            }
-
-            // Added in API 29 (VERIFIED FACT, current official reference,
-            // ConnectivityManager.NetworkCallback#onBlockedStatusChanged).
-            // minSdk is 26: overriding a callback method added in a later
-            // SDK level than the device's own is safe on Android -- the
-            // framework simply never invokes it on a device whose OS
-            // predates it, and the class still loads and verifies (the
-            // widely-used pattern for exactly this method; see e.g. public
-            // examples that override it with no SDK_INT guard). No
-            // @RequiresApi is needed because nothing here calls the
-            // superclass's platform implementation.
-            override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
-                trySend(PlatformEvent.BlockedStatusChanged(network, blocked))
-            }
-
-            override fun onLost(network: Network) {
-                trySend(PlatformEvent.Lost(network))
-            }
-
-            override fun onUnavailable() {
-                trySend(PlatformEvent.Unavailable)
+    private fun platformEvents(): Flow<PlatformEvent<Network, NetworkCapabilities>> = platformEventFlow(
+        registrar = platformRegistrar(),
+        logger = logger,
+        tag = TAG,
+        onSendFailed = { event ->
+            if (sendFailures.incrementAndGet() == 1L) {
+                logger.w(TAG, "Callback channel full, dropped ${event::class.simpleName}; state may be stale")
             }
         }
+    )
 
-        logger.i(TAG, "Registering default network callback")
-        connectivityManager?.registerDefaultNetworkCallback(callback)
-            ?: logger.w(TAG, "ConnectivityManager unavailable, no network updates will be delivered")
+    private fun platformRegistrar() =
+        PlatformCallbackRegistrar<Network, NetworkCapabilities> { sink ->
+            val manager = connectivityManager
+            if (manager == null) {
+                logger.w(TAG, "ConnectivityManager unavailable, no network updates will be delivered")
+                AutoCloseable { }
+            } else {
+                val callback = object : ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: Network) = sink.onAvailable(network)
 
-        awaitClose {
-            logger.i(TAG, "Unregistering default network callback")
-            connectivityManager?.unregisterNetworkCallback(callback)
+                    override fun onCapabilitiesChanged(
+                        network: Network,
+                        capabilities: NetworkCapabilities
+                    ) = sink.onCapabilitiesChanged(network, capabilities)
+
+                    // Added in API 29 (VERIFIED FACT, current official reference,
+                    // ConnectivityManager.NetworkCallback#onBlockedStatusChanged).
+                    // minSdk is 26: overriding a callback method added in a later
+                    // SDK level than the device's own is safe on Android -- the
+                    // framework simply never invokes it on a device whose OS
+                    // predates it. No @RequiresApi is needed because nothing here
+                    // calls the superclass's platform implementation.
+                    override fun onBlockedStatusChanged(network: Network, blocked: Boolean) =
+                        sink.onBlockedStatusChanged(network, blocked)
+
+                    override fun onLost(network: Network) = sink.onLost(network)
+
+                    override fun onUnavailable() = sink.onUnavailable()
+                }
+                manager.registerDefaultNetworkCallback(callback)
+                AutoCloseable { manager.unregisterNetworkCallback(callback) }
+            }
         }
-    }
 
     /**
      * Resolves capability data outside the actual `NetworkCallback`
@@ -131,7 +142,9 @@ class AndroidNetworkMonitor(
      * platform event, in order, with nothing dropped before it reaches
      * [NetworkEventReducer].
      */
-    private fun toRawNetworkEvent(event: PlatformEvent): RawNetworkEvent<Network> = when (event) {
+    private fun toRawNetworkEvent(
+        event: PlatformEvent<Network, NetworkCapabilities>
+    ): RawNetworkEvent<Network> = when (event) {
         is PlatformEvent.Available -> {
             // onAvailable does not itself carry capabilities; ask for the
             // current snapshot directly rather than waiting for a
@@ -174,18 +187,6 @@ class AndroidNetworkMonitor(
             transports = transports,
             rawCapabilityNames = presentNamedCapabilities
         )
-    }
-
-    /** Raw platform callback events, one-to-one with the NetworkCallback methods used. */
-    private sealed interface PlatformEvent {
-        data class Available(val network: Network) : PlatformEvent
-        data class CapabilitiesChanged(
-            val network: Network,
-            val capabilities: NetworkCapabilities
-        ) : PlatformEvent
-        data class BlockedStatusChanged(val network: Network, val blocked: Boolean) : PlatformEvent
-        data class Lost(val network: Network) : PlatformEvent
-        data object Unavailable : PlatformEvent
     }
 
     private companion object {
