@@ -11,7 +11,8 @@ Documentation and resource drafts only. No Kotlin, layout, manifest or Gradle fi
 | `values/strings_advisor.xml`, `values/colors_advisor.xml` | DRAFT resources. No layout or code references them. Not built by CI in a way that proves anything beyond "the XML is valid and merges". |
 | Contrast ratios in section 7 | Computed by this agent with the WCAG relative luminance formula from the hex values in `colors.xml`. Not measured on a device. |
 | Behavior on real devices, TalkBack, font scaling, Battery Saver | NOT VERIFIED. No device or emulator was used. |
-| Brand voice | Derived from the shipped strings and `.claude/06-ui-ux/SKILL.md`. The brand guideline documents named in the brief were not found (section 2), so conformance to them is UNCONFIRMED. |
+| Brand voice | Checked against `AERIVA_BRAND_IDENTITY_AND_LOGO_DESIGN.md` v1.0 and the handoff (revision 2, section 2). One deliberate deviation is recorded in section 5.1. |
+| Wiring | ON HOLD by leader decision until Agent 2's Android adapter exists. This document is revision 2: open questions O1 to O5 are now decided (section 10). |
 
 Evidence labels used below: CONFIRMED (read in the repository or in current official documentation), LIKELY (reasoned, not directly confirmed), UNCONFIRMED (could not be checked).
 
@@ -23,7 +24,7 @@ Read:
 * Existing `app/src/main/res/**` and `HomeUiText.kt` at `f53134c`, to match existing patterns.
 * `AdvisorOutcome.kt` on branch `feature/advisor-a1-core` @ `6a2ad0e` (read only, not merged). The state mapping in section 3 depends on it.
 
-Not found (CONFIRMED absent): `AERIVA_Brand_Assets_Production/Brand/AERIVA_Brand_Guidelines.md` and `AERIVA_BRAND_IDENTITY_AND_LOGO_DESIGN.md`. I searched `main` @ `9cff60c` and every remote branch for file names containing brand, logo or identity. Nothing exists. Those files are probably only in a local checkout. Consequence: every statement here about brand rules rests on the repository (strings, colors, UI skill, spec section 5.5), not on the guideline documents. The Team Leader should send them, or confirm that section 5 copy and section 9 colors are acceptable as they stand.
+Brand documents, supplied after revision 1: `AERIVA_BRAND_IDENTITY_AND_LOGO_DESIGN.md` v1.0, `AERIVA_BRAND_HANDOFF.md` and the brand boards. Still missing: `AERIVA_Brand_Guidelines.md`. The brand items are closed out in `BRAND_SIGNOFF_ITEMS.md`.
 
 Base note: the brief names `f53134c` as base. The branch tool available to me could only branch from a named branch, so this branch was created from `main` @ `9cff60c`. CONFIRMED by diff: `f53134c..9cff60c` adds two test files under `network/monitor/src/test` (PR #4) and nothing else. No file I touched overlaps. The leader can cherry pick my commits onto `f53134c` if a strict base is required.
 
@@ -43,7 +44,7 @@ The mapping from the A1 core result to a card state is below. `AdvisorOutcome` a
 | Evidence insufficient | `NOT_ENOUGH_EVIDENCE_TO_COMPARE` | `advisor_insufficient_headline` | `advisor_insufficient_message` |
 | Evidence insufficient (current unknown) | `DEFAULT_NETWORK_NOT_REPORTED` | `advisor_insufficient_headline` | `advisor_insufficient_unknown_current_message` |
 | Evidence insufficient (VPN) | `VPN_ACTIVE_ON_CURRENT` | `advisor_insufficient_headline` | `advisor_insufficient_vpn_message` |
-| Stale | Not produced by the A1 core. Comes from the Android adapter. See O1. | `advisor_stale_headline` | `advisor_stale_message` |
+| Stale | Not produced by the A1 core. Comes from the Android adapter. See D1. | `advisor_stale_headline` | `advisor_stale_message` |
 
 Decisions behind the mapping:
 1. The two anti flapping reasons (`CONDITION_NOT_STABLE_YET`, `RECENTLY_SHOWN`) show the idle card. The idle message is written to be true in every case where it can appear. It does not say "no other network is working", because while the dwell timer runs another network may in fact be validated.
@@ -54,7 +55,7 @@ Decisions behind the mapping:
 
 No layout is written here. This describes what the wiring task should build, reusing existing parts.
 
-* Container: the existing `card_background` drawable (surface `#0E1114`, 1dp stroke, 20dp radius), same padding as the status card (20dp). In the recommendation state the stroke uses `advisor_card_stroke_recommend`. That needs a second drawable, which belongs to the wiring task.
+* Container: the existing `card_background` drawable (surface `#0E1114`, 1dp stroke, 20dp radius), same padding as the status card (20dp). In the recommendation state only, the stroke uses `advisor_card_stroke_recommend`. That needs a second drawable, which belongs to the wiring task. Brand doc section 5 warns against decorative blue borders on every card. A blue outline on the one card that carries an actionable recommendation signals state, which the doc allows. If the leader prefers, drop it: the headline and action already carry the state.
 * Eyebrow: `advisor_card_title`, 12sp, silver, `textAllCaps`, same style as the existing details title.
 * Indicator dot: the existing `status_dot` at 14dp, tinted per state, `importantForAccessibility="no"` as in the status card.
 * Headline: 20sp bold, white, wraps, no `maxLines`.
@@ -64,7 +65,7 @@ No layout is written here. This describes what the wiring task should build, reu
 * Action (recommendation state only): a text button, `advisor_recommend_action`, 16sp bold, ice blue, minimum height 48dp.
 * Inline failure line (only after a failed tap): `advisor_recommend_action_failed`, 13sp, warning color.
 
-Placement recommendation: directly below the connection status card and above the details card, because it is the only actionable element on the screen. This is a layout decision for the leader (O2).
+Placement: directly below the connection status card and above the details card, because it is the only actionable element on the screen (decision D2).
 
 ## 5. Copy per state
 
@@ -86,7 +87,9 @@ Why "no confirmed internet" and not "no working internet" (the spec 5.5 example)
 
 Why "Try ... instead" and not "Switch to ...": AERIVA cannot switch anything (spec section 2). The action opens system settings, so the headline invites, it does not instruct.
 
-Known limit: the A1 core exposes a single `RecommendationCriteria` value. The card therefore cannot tell "current network has no validated internet" from "current network reported a sign-in page". Both use the same message. If the owner wants a sign-in specific line, the core needs to expose the difference (O3).
+Brand voice check: brand doc section 18 lists "A better network is available." as acceptable language. This card deliberately does not say "better" when it recommends, because A1 measures nothing and "better" implies a comparison of quality. "No confirmed internet" states only what Android reported. The owner may relax this after A2 exists. The same section lists "This feature requires additional permission.", which does not apply because A1 asks for none.
+
+Known limit: the A1 core exposes a single `RecommendationCriteria` value. The card therefore cannot tell "current network has no validated internet" from "current network reported a sign-in page". Both use the same message. If the owner wants a sign-in specific line, the core needs to expose the difference (D3 defers this).
 
 ### 5.2 Idle
 
@@ -114,7 +117,7 @@ Optional note, metered status differs: Some of these networks are metered and so
 
 The "does not measure ... in this version" sentence is true only while A2 does not exist. It must be reviewed when A2 ships (R-UI-1).
 
-The metered note is generic because `AdvisorNote.METERED_STATUS_DIFFERS` does not say which network is metered. Naming them ("Wi-Fi is not metered, mobile data is metered", as in spec 5.3 rule 4) needs candidate details passed to the UI (O3).
+The metered note is generic because `AdvisorNote.METERED_STATUS_DIFFERS` does not say which network is metered. Naming them ("Wi-Fi is not metered, mobile data is metered", as in spec 5.3 rule 4) needs candidate details passed to the UI (D3 defers this).
 
 ### 5.6 Stale
 
@@ -148,7 +151,7 @@ Screen reader labels:
 * Do not make the whole card one focus target. TalkBack then reads eyebrow, headline, message, basis and note in order, and the button as its own target.
 * The eyebrow is stored in sentence case and uppercased by the layout, so TalkBack reads "Network Advisor", not letters.
 * The indicator dot is hidden from accessibility (`importantForAccessibility="no"`), as the status card already does. State is carried by the headline text, never by color alone.
-* Headline gets `accessibilityLiveRegion="polite"`, matching the status card. Risk: two live regions on one screen can announce at the same moment when a network changes. Recommend that only the advisor headline of the Recommendation state and the Stale state announce, and the other states update silently (O4). This needs a TalkBack check on a device.
+* Live region (decision D4): the advisor headline is a polite live region only in the Recommendation state and the Stale state. In every other state it is not a live region and updates silently, because the status card above already announces connection changes and two announcements at once would be noise. When a recommendation is withdrawn the card updates silently. Needs a TalkBack check on a device when wired.
 * Action: the visible text is the label. Add `advisor_recommend_action_hint` as the hint so the user knows AERIVA does not change the connection. Tap target minimum 48dp by 48dp (Android accessibility guidance, LIKELY, not re fetched in this session).
 * Text uses `sp` everywhere and must wrap. No fixed card height, no `maxLines`, so 200 percent font scale stays readable. NOT VERIFIED on a device.
 * Focus order: status card, advisor card, details card, matching visual order.
@@ -173,7 +176,7 @@ Screen background black `#000000` gives higher ratios for every pairing above (s
 
 Finding, CONFIRMED arithmetic: the card stroke `#1E242B` against the surface `#0E1114` is 1.21:1. This is below 3:1. It is acceptable only because the stroke is decoration: the card is identified by its text, not by its outline. Do not rely on the outline alone to show the recommendation state. In that state the stroke is ice blue (11.66:1 on the surface), and the headline text changes too.
 
-The UI skill palette (`#0A0A0A`, `#C0C6D1`, `#5EC8FF`) also passes every row (silver 11.04, ice blue 10.08 on `#0E1114`). The palette mismatch is therefore a brand decision, not an accessibility one. See `BRAND_SIGNOFF_ITEMS.md`.
+The brand palette (`#0A0A0A`, `#C0C6D1`, `#5EC8FF`) also passes every row (silver 11.04, ice blue 10.08 on `#0E1114`). The brand doc, the handoff and the UI skill agree on these values, so `colors.xml` is the outlier (`BRAND_SIGNOFF_ITEMS.md` B5). The card surface and stroke are not defined by the brand sources. Correcting `colors.xml` is a separate leader approved task and does not change any decision here.
 
 ## 8. Reduced motion
 
@@ -183,7 +186,8 @@ Rules:
 1. Never animate the indicator dot, and never use a repeating or pulsing animation anywhere in this card.
 2. Card content changes between states instantly. If the leader wants a short cross fade, it is optional and must be skipped when `ValueAnimator.areAnimatorsEnabled()` is false.
 3. `ValueAnimator.areAnimatorsEnabled()` was added in API level 26, which equals the project minSdk, so no version guard is needed. CONFIRMED: developer.android.com/reference/android/animation/ValueAnimator and the API 26 diff at developer.android.com/sdk/api_diff/26/changes/android.animation.ValueAnimator. Per the same method's documented behavior, it returns false when the user sets the animator duration scale to 0 in developer options, and when Battery Saver disables animations. The Battery Saver statement is from a mirror of the Java documentation (learn.microsoft.com, Android bindings for the same method), CONFIRMED there, not re checked on developer.android.com.
-4. No motion is used to signal urgency. A recommendation appearing is announced by the live region, not by movement.
+4. This matches brand doc section 13: motion is subtle and purposeful, and reduced motion settings must be respected. A1 has no data activity to animate.
+5. No motion is used to signal urgency. A recommendation appearing is announced by the live region, not by movement.
 
 NOT VERIFIED: behavior with animations off on a device.
 
@@ -197,20 +201,24 @@ Existing files `strings.xml` and `colors.xml` are untouched, to avoid merge conf
 
 Checks run by this agent on the files: both parse as well formed XML; neither contains an em dash, an en dash or any non ASCII character; no duplicate names. Not run: Android resource merge, Android Lint, any build. Those only count through CircleCI on the exact head SHA (see the report).
 
-## 10. Open questions for the Team Leader
+## 10. Decisions on O1 to O5 (revision 2)
 
-| Id | Question | Label |
+Wiring is on hold until Agent 2's Android adapter exists. These decisions are the inputs the wiring task needs. D1 is the Team Leader's decision. D2 to D5 are mine and the leader may overrule them.
+
+| Id | Decision | Label |
 |---|---|---|
-| O1 | What makes the candidate list stale? Network callbacks are event driven, so a long silence on a stable connection is normal and is not staleness. I found no documented heartbeat. If "stale" is defined by the age of `observedAt`, the card would pause itself on healthy, unchanging Wi-Fi. Suggest defining stale only as a reported failure of the candidate monitor (registration failure or lost upstream), tied to the Agent 1 reliability audit. | LIKELY |
-| O2 | Is the card always visible after the first report, or hidden when idle or single network? I recommend always visible, so the feature is discoverable and the "nothing to suggest" answer is honest. Hiding is cleaner if the leader prefers fewer cards. | Decision |
-| O3 | The A1 core result does not tell the card whether the current network showed a sign-in page, and does not name which candidate is metered. Wording that uses those facts needs the core or the adapter to pass them. | Dependency |
-| O4 | Live region policy when both the status card and advisor card change at once (section 6). Needs TalkBack on a device. | Needs device check |
-| O5 | The deep link target. `Settings.Panel.ACTION_INTERNET_CONNECTIVITY` exists from API level 29 (CONFIRMED, developer.android.com/reference/android/provider/Settings.Panel). The fallback for API 26 to 28 was not researched here (UNCONFIRMED, same as spec 3.1 item 7). The failure string in section 5.1 covers the case where no activity resolves. | Partly UNCONFIRMED |
+| D1 (was O1) | Stale means dropped events, never age. The card enters Stale only when the adapter reports that events may have been lost (for example a failed delivery, a failed or lost callback registration, or an upstream error). Elapsed time without an event never causes Stale, because callbacks fire on change and silence is normal on a stable connection (LIKELY, no documented heartbeat found). Stale has priority over every other state and withdraws any recommendation. It clears only after the adapter has resynchronized and delivered a fresh full candidate list. Dependency: the adapter must expose this as a typed signal. This document does not name the API. | Leader decision |
+| D2 (was O2) | The card is always visible once the first candidate list has arrived, in all six states, placed between the status card and the details card. Before the first list the card is absent. No spinner, because nothing is measured. | Decision |
+| D3 (was O3) | A1 ships with the generic copy. No sign-in specific line and no named metered line. Both would need the core or adapter to pass extra facts. Revisit only if the owner wants them. | Decision |
+| D4 (was O4) | Live region policy as in section 6: announce only in the Recommendation and Stale states. | Decision, needs device check |
+| D5 (was O5) | Action target: on API 29 and later, `Settings.Panel.ACTION_INTERNET_CONNECTIVITY` (CONFIRMED from API 29, developer.android.com/reference/android/provider/Settings.Panel). On API 26 to 28, `Settings.ACTION_WIRELESS_SETTINGS`, which opens wireless controls such as Wi-Fi, Bluetooth and mobile networks (CONFIRMED to exist; the API level 1 origin is LIKELY, from an archived copy of the Settings reference). The platform documentation for these actions warns that a matching activity may not exist, so the tap must check that an activity resolves and otherwise show `advisor_recommend_action_failed`. Neither target is verified on a device. | Partly UNCONFIRMED |
+
+Consequence for the core: D1 means the A1 core does not produce Stale. The adapter does. The card state model in section 3 already treats it that way.
 
 ## 11. Real device validation list (design side)
 
 Required before calling the card done, per the "real device" rule in spec section 7:
-1. TalkBack: reading order, the live region behavior in O4, hint on the action.
+1. TalkBack: reading order, the live region behavior in D4, hint on the action.
 2. Font scale 130 and 200 percent: no clipping of any state, in the longest message (insufficient, VPN).
 3. Display size largest: card stays inside the 24dp screen padding.
 4. Animations off in developer options, and Battery Saver on: no motion.
@@ -224,12 +232,14 @@ Required before calling the card done, per the "real device" rule in spec sectio
 |---|---|---|
 | R-UI-1 | The "does not measure" sentence becomes false when A2 ships and must be rewritten then. | CONFIRMED dependency |
 | R-UI-2 | Numbered labels ("Mobile data 2") could swap meaning if the adapter reassigns numbers. | LIKELY |
-| R-UI-3 | Brand guideline documents were not available, so brand voice conformance is unchecked. | CONFIRMED gap |
+| R-UI-3 | `AERIVA_Brand_Guidelines.md` is still missing. The brand doc and handoff were checked, but anything only in that file is unchecked. | CONFIRMED gap |
 | R-UI-4 | `advisor_recommend_message` is built from two substituted names. Translation to languages with grammatical case would need review. Only English exists today. | LIKELY |
 
 ## 13. Sources
 
 * Repository at `f53134c` and `9cff60c`: `app/src/main/res/**`, `HomeUiText.kt`, `.claude/06-ui-ux/SKILL.md`, `.claude/00-core-engineering/SKILL.md`, `.claude/17-documentation-standards/SKILL.md`.
+* `AERIVA_BRAND_IDENTITY_AND_LOGO_DESIGN.md` v1.0 (sections 5, 13, 17, 18) and `AERIVA_BRAND_HANDOFF.md`.
+* developer.android.com/reference/android/provider/Settings (ACTION_WIRELESS_SETTINGS).
 * `NETWORK_ADVISOR_PHASE_A_SPEC.md`, branch `network-advisor-phase-a-spec`.
 * `AdvisorOutcome.kt`, branch `feature/advisor-a1-core` @ `6a2ad0e`.
 * developer.android.com/reference/android/animation/ValueAnimator (areAnimatorsEnabled, API 26).
