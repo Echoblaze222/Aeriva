@@ -64,7 +64,8 @@ class HomeRecoveryUiTest {
         lastChangedAt = Instant.EPOCH.plusSeconds(atSecond),
         captivePortalReported = false,
         vpnPresent = false,
-        blockedByDevicePolicy = false
+        blockedByDevicePolicy = false,
+        vpnUnderlyingTransport = TransportType.NONE
     )
 
     private val firstConnection = state(true, TransportType.WIFI, metered = false, atSecond = 1)

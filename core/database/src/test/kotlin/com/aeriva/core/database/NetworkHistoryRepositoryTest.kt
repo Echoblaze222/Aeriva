@@ -31,7 +31,8 @@ class NetworkHistoryRepositoryTest {
         lastChangedAt = recordedAt,
         captivePortalReported = false,
         vpnPresent = false,
-        blockedByDevicePolicy = false
+        blockedByDevicePolicy = false,
+        vpnUnderlyingTransport = TransportType.NONE
     )
 
     private fun repository(dao: FakeNetworkStateHistoryDao = FakeNetworkStateHistoryDao()) =

@@ -52,7 +52,8 @@ internal object NetworkStateMapper {
                 lastChangedAt = changedAt,
                 captivePortalReported = false,
                 vpnPresent = false,
-                blockedByDevicePolicy = blocked
+                blockedByDevicePolicy = blocked,
+                vpnUnderlyingTransport = TransportType.NONE
             )
         }
 

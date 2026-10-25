@@ -54,7 +54,8 @@ class HomeUiStateMappingTest {
         lastChangedAt = at,
         captivePortalReported = false,
         vpnPresent = false,
-        blockedByDevicePolicy = false
+        blockedByDevicePolicy = false,
+        vpnUnderlyingTransport = TransportType.NONE
     )
 
     @Test

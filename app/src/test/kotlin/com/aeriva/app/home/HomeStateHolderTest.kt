@@ -41,7 +41,8 @@ class HomeStateHolderTest {
         lastChangedAt = Instant.EPOCH.plusSeconds(atSecond),
         captivePortalReported = false,
         vpnPresent = false,
-        blockedByDevicePolicy = false
+        blockedByDevicePolicy = false,
+        vpnUnderlyingTransport = TransportType.NONE
     )
 
     private class Harness(

@@ -59,7 +59,8 @@ class ReferenceLatencyProbeExecutorTest {
             lastChangedAt = Instant.EPOCH,
             captivePortalReported = false,
             vpnPresent = false,
-            blockedByDevicePolicy = false
+            blockedByDevicePolicy = false,
+            vpnUnderlyingTransport = TransportType.NONE
         )
     )
 
