@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -29,15 +28,16 @@ import org.junit.runner.RunWith
  * real platform reason. Everything the test registers is unregistered in a
  * `finally`.
  *
- * ASSERTED: the failure reaches the collector as a RuntimeException (it is not
- * swallowed and does not hang), and a fresh collection works again once the
- * allowance is released.
+ * ASSERTED: the platform does refuse a registration once the allowance is
+ * full (the test FAILS, it does not skip, if it never does, so a silent skip
+ * cannot pass for coverage), the failure reaches the collector as a
+ * RuntimeException (it is not swallowed and does not hang), and a fresh
+ * collection works again once the allowance is released.
  *
  * NOT ASSERTED: what the app does with that exception. In the app it reaches
  * ConnectionStateRepository, which does not catch it; that is characterized on
  * the JVM by ConnectionStateRepositoryUpstreamFailureTest. The limit value is
- * not assumed: the test registers until the platform refuses, and is skipped
- * (assumption failure, not a pass) if the platform never refuses.
+ * not assumed: the test registers until the platform refuses.
  *
  * Emulator result, not a real device result. The recovery step polls because
  * the platform releases a request asynchronously after unregistration.
@@ -57,7 +57,7 @@ class AndroidNetworkMonitorRegistrationFailureInstrumentedTest {
         )
         val held = mutableListOf<ConnectivityManager.NetworkCallback>()
         var limitReached = false
-        val failedAttempt: Result<NetworkState>
+        var failedAttempt: Result<NetworkState>? = null
         try {
             for (attempt in 1..MAX_INERT_REGISTRATIONS) {
                 val callback = InertCallback()
@@ -69,20 +69,26 @@ class AndroidNetworkMonitorRegistrationFailureInstrumentedTest {
                     break
                 }
             }
-            assumeTrue("the platform never refused a registration, nothing to exercise", limitReached)
 
-            failedAttempt = attemptFirstState(monitor)
+            if (limitReached) {
+                failedAttempt = attemptFirstState(monitor)
+            }
         } finally {
             held.forEach { runCatching { connectivityManager.unregisterNetworkCallback(it) } }
         }
 
         assertTrue(
+            "the platform never refused a registration after $MAX_INERT_REGISTRATIONS inert callbacks, so this path was not exercised",
+            limitReached
+        )
+        val failure = checkNotNull(failedAttempt)
+        assertTrue(
             "observe() must surface the refused registration instead of hanging or returning a state",
-            failedAttempt.isFailure
+            failure.isFailure
         )
         assertTrue(
             "the surfaced failure must be a RuntimeException, as documented for too many callbacks",
-            failedAttempt.exceptionOrNull() is RuntimeException
+            failure.exceptionOrNull() is RuntimeException
         )
 
         var recovered = attemptFirstState(monitor)
