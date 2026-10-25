@@ -3,7 +3,7 @@
 Author: Agent 1 (network monitor reliability engineer)
 Branch: `audit/network-monitor-seam-report`
 Base: `main` @ `9cff60cd0544` (see "Base note")
-Scope: investigation only. No production file changed. Production files read: `AndroidNetworkMonitor.kt`, `ConnectionStateRepository.kt`, `AppContainer.kt`, plus `NetworkEventReducer.kt` (`foldNetworkStateFlow`) for context.
+Scope: investigation only. No production file changed on this branch. The seam itself is built on a separate branch, `audit/network-monitor-seam-impl` (see section 3, Status). Production files read: `AndroidNetworkMonitor.kt`, `ConnectionStateRepository.kt`, `AppContainer.kt`, plus `NetworkEventReducer.kt` (`foldNetworkStateFlow`) for context.
 
 Labels follow decision L7: CONFIRMED (code read or test result or official source), LIKELY (reasoned, not reproduced), UNCONFIRMED (cannot be shown without a device, a seam, or both).
 
@@ -35,11 +35,11 @@ Line numbers are in `AndroidNetworkMonitor.kt` at `9cff60c` unless stated.
 | R2 | Which event is dropped on overflow is the NEWEST, so the final truth (`Lost`, the latest `CapabilitiesChanged`) is what is lost while the oldest are kept. | CONFIRMED on the replica shape (SUSPEND overflow, default buffer). | `callbackFlow` default capacity is `Channel.BUFFERED`, which is 64 for the SUSPEND overflow strategy (kotlinlang.org API reference for `Channel.Factory.BUFFERED`). | Same test, first case: accepted sends are a prefix, rejected a suffix, consumer receives the accepted ones in order. |
 | R3 | Consequence of a dropped `Lost`: the pipeline keeps reporting the lost network as connected until some later `Available` arrives. A dropped `Available(B)` makes all later events of B ignored until the next `Available`. | CONFIRMED for the reducer side (the second is already pinned by `NetworkStateMissingEventRecoveryTest`, line 61). CONFIRMED for the first on the replica pipeline. | `NetworkEventReducer` contract: only `Available` establishes a tracked network. | `aLostEventRejectedByAFullBuffer_leavesThePipelineReportingTheLostNetworkAsConnected`, with a control that reports the loss when nothing overflows. |
 | R4 | Whether the buffer can actually fill on a device. Pending events need to exceed 64 while the collector is not draining. Possible slow points: the `.map(::toRawNetworkEvent)` stage does a synchronous binder call per `Available` (line 144), and the collector runs on `Dispatchers.Default` (`AppContainer.kt` line 30). Downstream `debounce` consumes upstream through its own channel, so a slow terminal collector does not by itself back-pressure the callback channel. | UNCONFIRMED. Probability reasoned as low, not measured. | Code reading only. | None possible without a device stress run. Not claimed. |
-| R5 | `registerDefaultNetworkCallback` can throw. Platform documents a `RuntimeException` when the app already has too many callbacks registered (limit of 100 outstanding requests per UID, shared between callbacks). In `AndroidNetworkMonitor` the throw happens inside the `callbackFlow` block (line 111), before `awaitClose` (line 114), so nothing is registered and no unregister is attempted. The exception fails the flow. `ConnectionStateRepository` does not catch it (lines 38 to 50), so with `Eagerly` it fails the sharing coroutine and, in the app where `appScope` has no handler (`AppContainer.kt` line 30), is INFERRED to reach the uncaught-exception handler. | CONFIRMED that the throw is documented and that the repository does not catch (code, plus merged JVM test). LIKELY that it is reachable only by leaking registrations or by many collectors, since the app has one registration by design. UNCONFIRMED that the process terminates (still inferred, not demonstrated, as the merged test KDoc says). | AOSP `ConnectivityManager` Javadoc change and Android reference for `ConnectivityDiagnosticsManager` (limit 100 per UID, shared). | Instrumented, seam free: `AndroidNetworkMonitorRegistrationFailureInstrumentedTest` (this branch). Result recorded in the final report, not here. |
-| R6 | `observe()` creates one registration per collection (line 74 runs per collector). Duplicate registration of the SAME callback instance cannot happen because a new anonymous callback is created per collection (line 75). Many registrations can: each extra `observe()` collector adds one against the 100 per UID allowance. Today only `ConnectionStateRepository` collects (line 38), plus instrumented tests. | CONFIRMED that same-instance duplication is structurally impossible and that collectors multiply registrations (code). UNCONFIRMED what the platform does for a re-registered same instance (not reachable from this code). | `grep` of `observe()` call sites: one production caller. | Covered by R5's instrumented test only indirectly. A deterministic count needs the seam. |
-| R7 | Unregistration on cancellation (lines 114 to 117). If `unregisterNetworkCallback` throws inside `awaitClose` it would propagate out of the cancelled collection. A leaked registration would shrink the 100 allowance over time. | LIKELY fine: `awaitClose` always runs on cancellation, and the instrumented test `observe_canBeCollectedAgainAfterTheFirstCollectionIsCancelled` shows repeated collection works, but that test would not notice a single leak. UNCONFIRMED that unregistration actually releases. | Code reading. | A deterministic test needs the seam (count register and unregister calls). A seam free leak counter exists in principle (fill the allowance, leave a few free, cycle the monitor) but the platform releases requests asynchronously, which makes it timing sensitive. Not committed, to avoid a flaky test. |
+| R5 | `registerDefaultNetworkCallback` can throw. Platform documents a `RuntimeException` when the app already has too many callbacks registered (limit of 100 outstanding requests per UID, shared between callbacks). In `AndroidNetworkMonitor` the throw happens inside the `callbackFlow` block (line 111), before `awaitClose` (line 114), so nothing is registered and no unregister is attempted. The exception fails the flow. `ConnectionStateRepository` does not catch it (lines 38 to 50), so with `Eagerly` it fails the sharing coroutine and, in the app where `appScope` has no handler (`AppContainer.kt` line 30), is INFERRED to reach the uncaught-exception handler. | CONFIRMED that the throw is documented and that the repository does not catch (code, plus merged JVM test). LIKELY that it is reachable only by leaking registrations or by many collectors, since the app has one registration by design. UNCONFIRMED that the process terminates (still inferred, not demonstrated, as the merged test KDoc says). | AOSP `ConnectivityManager` Javadoc change and Android reference for `ConnectivityDiagnosticsManager` (limit 100 per UID, shared). | Instrumented, seam free: `AndroidNetworkMonitorRegistrationFailureInstrumentedTest` (this branch). Emulator result: the platform refused a registration once the allowance was full, `observe()` surfaced a RuntimeException, and a fresh collection worked after release (CircleCI run `90957b91-5b38-4b20-a26a-6f907538c4a4`, commit `5fd7d2f`). The test fails, not skips, if the platform never refuses. Not a real device result. |
+| R6 | `observe()` creates one registration per collection (line 74 runs per collector). Duplicate registration of the SAME callback instance cannot happen because a new anonymous callback is created per collection (line 75). Many registrations can: each extra `observe()` collector adds one against the 100 per UID allowance. Today only `ConnectionStateRepository` collects (line 38), plus instrumented tests. | CONFIRMED that same-instance duplication is structurally impossible and that collectors multiply registrations (code). UNCONFIRMED what the platform does for a re-registered same instance (not reachable from this code). | `grep` of `observe()` call sites: one production caller. | Covered by R5's instrumented test only indirectly. The deterministic count is `PlatformEventFlowTest` on `audit/network-monitor-seam-impl`. |
+| R7 | Unregistration on cancellation (lines 114 to 117). If `unregisterNetworkCallback` throws inside `awaitClose` it would propagate out of the cancelled collection. A leaked registration would shrink the 100 allowance over time. | LIKELY fine: `awaitClose` always runs on cancellation, and the instrumented test `observe_canBeCollectedAgainAfterTheFirstCollectionIsCancelled` shows repeated collection works, but that test would not notice a single leak. UNCONFIRMED that the platform itself releases the request (the JVM test on the seam branch proves the unregister handle is closed exactly once, not what the platform does with it). | Code reading. | `PlatformEventFlowTest` on `audit/network-monitor-seam-impl` counts register and close calls. A seam free leak counter exists in principle (fill the allowance, leave a few free, cycle the monitor) but the platform releases requests asynchronously, which makes it timing sensitive. Not committed, to avoid a flaky test. |
 | R8 | `connectivityManager` may be null (line 66). Then registration is skipped with a warning (lines 111 and 112), `awaitClose` still suspends, and the flow emits nothing forever. The repository then keeps the unknown placeholder. | UNCONFIRMED as a real device condition. CONFIRMED as code behavior. | Code reading. The `?:` branch fires only for a null manager because registration returns Unit. | None needed for the seam. Mentioned so the seam keeps this branch reachable. |
-| R9 | Delivery is on the platform's callback thread while the channel is consumed on `Dispatchers.Default`. `trySend` is thread safe. Event order is the order of `trySend` calls, which follows the platform's callback order. | LIKELY safe. | `ProducerScope` is a channel. | Not separately tested. |
+| R9 | Delivery is on the platform's callback thread while the channel is consumed on `Dispatchers.Default`. `trySend` is thread safe. Event order is the order of `trySend` calls, which follows the platform's callback order. | LIKELY safe. | `ProducerScope` is a channel. | Order is covered on the seam branch (`eventsAreDeliveredInCallbackOrder`), on one thread only. |
 
 Not a risk, recorded to prevent a false alarm: line 111 uses `?:` on a Unit result. It reads oddly but behaves as intended (R8).
 
@@ -47,7 +47,7 @@ Not a risk, recorded to prevent a false alarm: line 111 uses `?:` on a Unit resu
 
 Goal: drive the real callback shape on the JVM, deterministically, to exercise `trySend` failure, registration throwing, unregistration on cancellation and duplicate registration. A `ConnectivityManager.NetworkCallback` cannot be constructed on the plain JVM in this module (stated by the merged test KDoc; this agent did not independently verify it). So the seam must remove Android types from the callbackFlow block.
 
-Proposal (NOT applied; production files are read only for this agent). One new internal file plus a small edit of `AndroidNetworkMonitor.kt`:
+Proposal (one new internal file plus a small edit of `AndroidNetworkMonitor.kt`; built on a separate branch, see Status below):
 
 ```kotlin
 // network/monitor/src/main/kotlin/com/aeriva/network/monitor/PlatformEventSource.kt
@@ -68,8 +68,9 @@ internal sealed interface PlatformEvent<out N, out C> { /* the five existing cas
 
 internal fun <N, C> platformEventFlow(
     registrar: PlatformCallbackRegistrar<N, C>,
-    onSendFailed: (PlatformEvent<N, C>) -> Unit = {},
-    logger: AerivaLogger
+    logger: AerivaLogger,
+    tag: String,
+    onSendFailed: (PlatformEvent<N, C>) -> Unit = {}
 ): Flow<PlatformEvent<N, C>> = callbackFlow { /* same body as today, using the sink */ }
 ```
 
@@ -77,7 +78,7 @@ internal fun <N, C> platformEventFlow(
 
 What each requested behavior becomes on the JVM with a fake registrar:
 
-- `trySend` failure: the fake keeps the sink, the test calls it more than 64 times while the collector is parked, and asserts `onSendFailed` fired for the newest events. This is the test that today can only be shown on a replica.
+- `trySend` failure: the fake keeps the sink, the test calls it more than 64 times while the collector is parked, and asserts `onSendFailed` fired for the newest events. This is the test that on this branch can only be shown on a replica.
 - `registerDefaultNetworkCallback` throwing: the fake registrar throws from `register`. Assert the flow fails with that exception, `close` was never called, and nothing is left registered.
 - Unregistration on cancellation: the fake counts `register` and `close` calls. Cancel the collector, assert exactly one `close`.
 - Duplicate registration: collect twice, assert two distinct sink instances and two registrations, and that closing one leaves the other delivering. Documents R6.
@@ -88,7 +89,7 @@ A seam free alternative was used where possible: the registration failure case i
 
 A mocking library would also give access to the callback without a seam, but it is a new dependency (decision L6) and cannot construct the Android callback class on the JVM without further tooling, so it is not recommended.
 
-Approval needed from the Team Leader: applying the seam changes `AndroidNetworkMonitor.kt`, which is outside Agent 1 ownership (decision L4 ties the Network Advisor Android adapter to this decision).
+Status: the seam is implemented, behavior preserving, on branch `audit/network-monitor-seam-impl` @ `f14fb82` (CircleCI run `5a7a3c1e-3f7a-4349-9588-a0b6a902b00f`, all four jobs green). It adds `PlatformEventSource.kt`, rewrites `AndroidNetworkMonitor.kt` as an adapter over it, adds a `droppedEventCount` and one warning log on the first rejected send, and adds `PlatformEventFlowTest` (6 JVM tests: order, registration throwing, unregistration on cancel, one sink per collection, overflow reported with the newest event dropped, late callback not counted). It edits a production file outside the original Agent 1 ownership, so it is unmerged and needs the Team Leader's merge (decision L4 ties the Network Advisor Android adapter to this decision). The recommendation steps in section 4 are unchanged: step 1 (detection) is implemented there, step 2 (resync) is not.
 
 ## 4. Recommendation on channel semantics
 
@@ -107,7 +108,7 @@ Written analysis of the options. Memory growth, event ordering and state consist
 
 Recommended design, in order of effort:
 
-1. Detection (small). Make every `trySend` result observable: on failure, increment a counter, set an overflow flag, and log once through `AerivaLogger`. No behavior change. This needs the seam only if it is to be unit tested.
+1. Detection (small). Make every `trySend` result observable: on failure, increment a counter, set an overflow flag, and log once through `AerivaLogger`. No behavior change. Implemented on `audit/network-monitor-seam-impl` (counter and log; the overflow flag is not added).
 2. Resynchronization (moderate, needs a reducer decision). When the flag is set, the consumer, outside the callback, reads the platform's current default network and capabilities and feeds the reducer a synthetic `Lost(tracked)` followed by `Available(current, snapshot)`. The synchronous lookup must stay out of the callback body, which the platform documents as race prone and which the class KDoc already cites. This adds a new event source to the reducer contract and therefore needs a Team Leader decision.
 3. Only if measurement shows overflow is real: raise the buffer size. A larger bounded buffer is simpler than changing the type and keeps ordering and a hard memory cap. The right size is UNCONFIRMED and needs a device stress result.
 
@@ -115,8 +116,8 @@ The merged `NetworkStateMissingEventRecoveryTest` shows the pipeline already sel
 
 ## 5. Open items for the Team Leader
 
-1. Approve or reject the seam in section 3. It changes `AndroidNetworkMonitor.kt` and adds one internal file, outside Agent 1 ownership.
-2. Decide whether detection (recommendation step 1) is wanted before the Network Advisor A1 adapter reuses this callback pattern (leader decision L4 and spec risk R4).
+1. Merge or reject `audit/network-monitor-seam-impl` (the seam of section 3, already built). It changes `AndroidNetworkMonitor.kt` and adds one internal file, outside Agent 1 ownership.
+2. Detection (recommendation step 1) is included in that branch. Decide whether it must land before the Network Advisor A1 adapter reuses this callback pattern (leader decision L4 and spec risk R4). Nothing yet displays `droppedEventCount`.
 3. Decide whether resynchronization (step 2) needs a reducer contract change, and who owns it.
 4. Decide whether a real device stress run is worth scheduling to settle R4. Emulator results do not answer it.
 
