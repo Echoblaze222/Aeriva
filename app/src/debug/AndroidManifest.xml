@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DEBUG BUILD ONLY. Data Usage validation probe (DATA_USAGE_PHASE_SPEC.md
+  section 6.5). Lives in the debug source set so the release manifest is
+  untouched: the release app does NOT declare PACKAGE_USAGE_STATS. Declaring it
+  in a release build is decision DU-3 and waits for the Play Console check.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <application>
+        <activity
+            android:name="com.aeriva.app.probe.DataUsageProbeActivity"
+            android:exported="true"
+            android:label="AERIVA Probe"
+            android:theme="@style/Theme.Aeriva">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
