@@ -6,11 +6,10 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import com.aeriva.core.logging.AerivaLogger
 import com.aeriva.core.model.NetworkState
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.map
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * [NetworkMonitor] backed by [ConnectivityManager.registerDefaultNetworkCallback],
@@ -65,57 +64,48 @@ class AndroidNetworkMonitor(
     private val connectivityManager =
         context.applicationContext.getSystemService(ConnectivityManager::class.java)
 
+    private val sendFailures = AtomicLong(0)
+
+    /**
+     * How many platform events were rejected by the callback channel since
+     * this monitor was created (a full buffer). Zero is the expected value.
+     * A rejected event is dropped, never retried, so a non-zero count means
+     * the reported state may be stale until the next complete `Available`
+     * burst. See NETWORK_MONITOR_RELIABILITY_SEAM_REPORT.md, risks R1 to R3.
+     * Closed-channel rejections after cancellation are not counted.
+     */
+    val droppedEventCount: Long
+        get() = sendFailures.get()
+
     override fun observe(): Flow<NetworkState> = foldNetworkStateFlow(
         events = platformEvents().map(::toRawNetworkEvent),
         debounceMillis = debounceMillis,
         now = now
     )
 
-    private fun platformEvents(): Flow<PlatformEvent> = callbackFlow {
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                trySend(PlatformEvent.Available(network))
-            }
-
-            override fun onCapabilitiesChanged(
-                network: Network,
-                capabilities: NetworkCapabilities
-            ) {
-                trySend(PlatformEvent.CapabilitiesChanged(network, capabilities))
-            }
-
-            // Added in API 29 (VERIFIED FACT, current official reference,
-            // ConnectivityManager.NetworkCallback#onBlockedStatusChanged).
-            // minSdk is 26: overriding a callback method added in a later
-            // SDK level than the device's own is safe on Android -- the
-            // framework simply never invokes it on a device whose OS
-            // predates it, and the class still loads and verifies (the
-            // widely-used pattern for exactly this method; see e.g. public
-            // examples that override it with no SDK_INT guard). No
-            // @RequiresApi is needed because nothing here calls the
-            // superclass's platform implementation.
-            override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
-                trySend(PlatformEvent.BlockedStatusChanged(network, blocked))
-            }
-
-            override fun onLost(network: Network) {
-                trySend(PlatformEvent.Lost(network))
-            }
-
-            override fun onUnavailable() {
-                trySend(PlatformEvent.Unavailable)
+    private fun platformEvents(): Flow<PlatformEvent<Network, NetworkCapabilities>> = platformEventFlow(
+        registrar = platformRegistrar(),
+        logger = logger,
+        tag = TAG,
+        onSendFailed = { event ->
+            if (sendFailures.incrementAndGet() == 1L) {
+                logger.w(TAG, "Callback channel full, dropped ${event::class.simpleName}; state may be stale")
             }
         }
+    )
 
-        logger.i(TAG, "Registering default network callback")
-        connectivityManager?.registerDefaultNetworkCallback(callback)
-            ?: logger.w(TAG, "ConnectivityManager unavailable, no network updates will be delivered")
-
-        awaitClose {
-            logger.i(TAG, "Unregistering default network callback")
-            connectivityManager?.unregisterNetworkCallback(callback)
+    private fun platformRegistrar() =
+        PlatformCallbackRegistrar<Network, NetworkCapabilities> { sink ->
+            val manager = connectivityManager
+            if (manager == null) {
+                logger.w(TAG, "ConnectivityManager unavailable, no network updates will be delivered")
+                AutoCloseable { }
+            } else {
+                val callback = networkCallbackFor(sink)
+                manager.registerDefaultNetworkCallback(callback)
+                AutoCloseable { manager.unregisterNetworkCallback(callback) }
+            }
         }
-    }
 
     /**
      * Resolves capability data outside the actual `NetworkCallback`
@@ -131,7 +121,9 @@ class AndroidNetworkMonitor(
      * platform event, in order, with nothing dropped before it reaches
      * [NetworkEventReducer].
      */
-    private fun toRawNetworkEvent(event: PlatformEvent): RawNetworkEvent<Network> = when (event) {
+    private fun toRawNetworkEvent(
+        event: PlatformEvent<Network, NetworkCapabilities>
+    ): RawNetworkEvent<Network> = when (event) {
         is PlatformEvent.Available -> {
             // onAvailable does not itself carry capabilities; ask for the
             // current snapshot directly rather than waiting for a
@@ -142,11 +134,11 @@ class AndroidNetworkMonitor(
             // give us, so nothing is invented; see RawNetworkEvent's own
             // KDoc.
             val capabilities = connectivityManager?.getNetworkCapabilities(event.network)
-            RawNetworkEvent.Available(event.network, capabilities?.let(::toSnapshot))
+            RawNetworkEvent.Available(event.network, capabilities?.toRawSnapshot())
         }
 
         is PlatformEvent.CapabilitiesChanged ->
-            RawNetworkEvent.CapabilitiesChanged(event.network, toSnapshot(event.capabilities))
+            RawNetworkEvent.CapabilitiesChanged(event.network, event.capabilities.toRawSnapshot())
 
         is PlatformEvent.BlockedStatusChanged ->
             RawNetworkEvent.BlockedStatusChanged(event.network, event.blocked)
@@ -156,65 +148,8 @@ class AndroidNetworkMonitor(
         PlatformEvent.Unavailable -> RawNetworkEvent.Unavailable
     }
 
-    private fun toSnapshot(capabilities: NetworkCapabilities): RawCapabilitiesSnapshot {
-        val transports = ALL_TRANSPORT_CONSTANTS
-            .filter { capabilities.hasTransport(it) }
-            .mapNotNull(::mapTransportConstant)
-            .toSet()
-
-        val presentNamedCapabilities = NAMED_CAPABILITIES_OF_INTEREST
-            .filter { (constant, _) -> capabilities.hasCapability(constant) }
-            .map { (_, name) -> name }
-            .toSet()
-
-        return RawCapabilitiesSnapshot(
-            hasInternet = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
-            isValidated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
-            isNotMetered = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
-            transports = transports,
-            rawCapabilityNames = presentNamedCapabilities
-        )
-    }
-
-    /** Raw platform callback events, one-to-one with the NetworkCallback methods used. */
-    private sealed interface PlatformEvent {
-        data class Available(val network: Network) : PlatformEvent
-        data class CapabilitiesChanged(
-            val network: Network,
-            val capabilities: NetworkCapabilities
-        ) : PlatformEvent
-        data class BlockedStatusChanged(val network: Network, val blocked: Boolean) : PlatformEvent
-        data class Lost(val network: Network) : PlatformEvent
-        data object Unavailable : PlatformEvent
-    }
-
     private companion object {
         const val TAG = "AndroidNetworkMonitor"
         const val DEFAULT_DEBOUNCE_MILLIS = 300L
-
-        val ALL_TRANSPORT_CONSTANTS = listOf(
-            NetworkCapabilities.TRANSPORT_VPN,
-            NetworkCapabilities.TRANSPORT_ETHERNET,
-            NetworkCapabilities.TRANSPORT_WIFI,
-            NetworkCapabilities.TRANSPORT_CELLULAR,
-            NetworkCapabilities.TRANSPORT_BLUETOOTH,
-            NetworkCapabilities.TRANSPORT_LOWPAN,
-            NetworkCapabilities.TRANSPORT_USB,
-            NetworkCapabilities.TRANSPORT_WIFI_AWARE
-        )
-
-        // Curated, not exhaustive. Listed here, by name, only because we
-        // can vouch for what each one means -- do not add a constant to
-        // this list without also being able to explain it in the brand's
-        // plain-language voice, per engineering standards Section 17.
-        val NAMED_CAPABILITIES_OF_INTEREST = listOf(
-            NetworkCapabilities.NET_CAPABILITY_INTERNET to "INTERNET",
-            NetworkCapabilities.NET_CAPABILITY_VALIDATED to "VALIDATED",
-            NetworkCapabilities.NET_CAPABILITY_NOT_METERED to "NOT_METERED",
-            NetworkCapabilities.NET_CAPABILITY_NOT_VPN to "NOT_VPN",
-            NetworkCapabilities.NET_CAPABILITY_TRUSTED to "TRUSTED",
-            NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED to "NOT_RESTRICTED",
-            NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL to "CAPTIVE_PORTAL"
-        )
     }
 }
