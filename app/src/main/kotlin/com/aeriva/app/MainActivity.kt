@@ -1,12 +1,22 @@
 package com.aeriva.app
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.res.ColorStateList
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.aeriva.app.advisor.AdvisorUiState
+import com.aeriva.app.advisor.headline
+import com.aeriva.app.advisor.indicatorColorRes
+import com.aeriva.app.advisor.message
+import com.aeriva.app.advisor.noteText
 import com.aeriva.app.home.HomeUiState
 import com.aeriva.app.home.detailRows
 import com.aeriva.app.home.headlineRes
@@ -19,30 +29,27 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
-/**
- * AERIVA launcher Activity and home screen.
- *
- * Lifecycle model: state is collected only between onStart and onStop. The
- * collection Job is cancelled in onStop, so no collector outlives the
- * visible Activity, and a configuration change (stop -> destroy -> create ->
- * start) simply attaches a new collector to the already-running, process
- * scoped StateFlow -- never a second platform network callback. The Activity
- * never touches ConnectivityManager or the monitor directly.
- *
- * Plain `android.app.Activity` is used on purpose: AppCompat and
- * lifecycle-runtime are not in the project's pinned dependency catalog, and
- * this screen needs neither.
- */
 class MainActivity : Activity() {
 
     private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var collectJob: Job? = null
+    private var advisorJob: Job? = null
+    private var settingsLaunched = false
 
     private lateinit var statusIndicator: View
     private lateinit var statusHeadline: TextView
     private lateinit var statusMessage: TextView
     private lateinit var detailsCard: View
     private lateinit var detailsContainer: LinearLayout
+
+    private lateinit var advisorCard: View
+    private lateinit var advisorIndicator: View
+    private lateinit var advisorHeadline: TextView
+    private lateinit var advisorMessage: TextView
+    private lateinit var advisorBasis: TextView
+    private lateinit var advisorNote: TextView
+    private lateinit var advisorAction: TextView
+    private lateinit var advisorActionError: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,20 +60,46 @@ class MainActivity : Activity() {
         statusMessage = findViewById(R.id.status_message)
         detailsCard = findViewById(R.id.details_card)
         detailsContainer = findViewById(R.id.details_container)
+
+        advisorCard = findViewById(R.id.advisor_card)
+        advisorIndicator = findViewById(R.id.advisor_indicator)
+        advisorHeadline = findViewById(R.id.advisor_headline)
+        advisorMessage = findViewById(R.id.advisor_message)
+        advisorBasis = findViewById(R.id.advisor_basis)
+        advisorNote = findViewById(R.id.advisor_note)
+        advisorAction = findViewById(R.id.advisor_action)
+        advisorActionError = findViewById(R.id.advisor_action_error)
+
+        advisorAction.setOnClickListener { openNetworkSettings() }
+        // The visible text is the label; the hint tells the user AERIVA does not
+        // change the connection (ADVISOR_UI_SPEC.md section 6).
+        advisorAction.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.hintText = getString(R.string.advisor_recommend_action_hint)
+            }
+        }
     }
 
     override fun onStart() {
         super.onStart()
-        val homeState = (application as AerivaApplication).container.homeState
+        settingsLaunched = false
+        val container = (application as AerivaApplication).container
         collectJob?.cancel()
         collectJob = uiScope.launch {
-            homeState.uiState.collect { render(it) }
+            container.homeState.uiState.collect { render(it) }
+        }
+        advisorJob?.cancel()
+        advisorJob = uiScope.launch {
+            container.advisorState.uiState.collect { renderAdvisor(it) }
         }
     }
 
     override fun onStop() {
         collectJob?.cancel()
         collectJob = null
+        advisorJob?.cancel()
+        advisorJob = null
         super.onStop()
     }
 
@@ -91,5 +124,63 @@ class MainActivity : Activity() {
             detailsContainer.addView(view)
         }
         detailsCard.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    private fun renderAdvisor(state: AdvisorUiState) {
+        if (state is AdvisorUiState.Absent) {
+            advisorCard.visibility = View.GONE
+            return
+        }
+        advisorCard.visibility = View.VISIBLE
+
+        val recommending = state is AdvisorUiState.Recommend
+        advisorCard.setBackgroundResource(
+            if (recommending) R.drawable.card_background_recommend else R.drawable.card_background
+        )
+        advisorIndicator.backgroundTintList = ColorStateList.valueOf(getColor(state.indicatorColorRes()))
+        advisorHeadline.text = state.headline(this)
+        // Announce only a recommendation or a pause (decision D4). Every other
+        // state updates silently because the status card already announces
+        // connection changes.
+        advisorHeadline.accessibilityLiveRegion =
+            if (recommending || state is AdvisorUiState.Stale) {
+                View.ACCESSIBILITY_LIVE_REGION_POLITE
+            } else {
+                View.ACCESSIBILITY_LIVE_REGION_NONE
+            }
+        advisorMessage.text = state.message(this)
+
+        val notes = state.noteText(this)
+        advisorNote.text = notes
+        advisorNote.visibility = if (notes.isEmpty()) View.GONE else View.VISIBLE
+
+        val actionVisibility = if (recommending) View.VISIBLE else View.GONE
+        advisorBasis.visibility = actionVisibility
+        advisorAction.visibility = actionVisibility
+        // A failure line belongs to the card state it was shown for.
+        advisorActionError.visibility = View.GONE
+    }
+
+    /**
+     * Opens the system network settings (ADVISOR_UI_SPEC.md decision D5). The
+     * launch returns immediately, so a second tap while it is in flight is
+     * ignored. The platform warns a matching activity may not exist, so a
+     * missing one shows the failure line instead of crashing.
+     */
+    private fun openNetworkSettings() {
+        if (settingsLaunched) return
+        val action = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            Settings.Panel.ACTION_INTERNET_CONNECTIVITY
+        } else {
+            Settings.ACTION_WIRELESS_SETTINGS
+        }
+        settingsLaunched = true
+        try {
+            startActivity(Intent(action))
+            advisorActionError.visibility = View.GONE
+        } catch (unavailable: ActivityNotFoundException) {
+            settingsLaunched = false
+            advisorActionError.visibility = View.VISIBLE
+        }
     }
 }
