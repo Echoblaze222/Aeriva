@@ -74,6 +74,27 @@ fun AdvisorUiState.noteText(context: Context): String {
     }.joinToString(separator = "\n")
 }
 
+/** "Wi-Fi (in use)" for the default network, the plain name otherwise. */
+fun NetworkRow.title(context: Context): String {
+    val name = label.text(context)
+    return if (isDefault) context.getString(R.string.networks_row_in_use, name) else name
+}
+
+/**
+ * What Android reported about the network, one fact per line. These are
+ * Android's own flags, never an AERIVA measurement.
+ */
+fun NetworkRow.detail(context: Context): String = buildList {
+    add(
+        context.getString(
+            if (validated) R.string.networks_check_passed else R.string.networks_check_not_passed
+        )
+    )
+    add(context.getString(if (metered) R.string.networks_metered else R.string.networks_not_metered))
+    if (captivePortalReported) add(context.getString(R.string.networks_sign_in_page))
+    if (blockedByDevicePolicy) add(context.getString(R.string.networks_blocked))
+}.joinToString(separator = "\n")
+
 private fun NetworkLabel.text(context: Context): String {
     val name = context.getString(transport.labelRes())
     return if (number != null) {

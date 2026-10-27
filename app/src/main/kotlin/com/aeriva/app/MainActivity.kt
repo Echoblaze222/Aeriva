@@ -13,10 +13,13 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.aeriva.app.advisor.AdvisorUiState
+import com.aeriva.app.advisor.NetworkRow
+import com.aeriva.app.advisor.detail
 import com.aeriva.app.advisor.headline
 import com.aeriva.app.advisor.indicatorColorRes
 import com.aeriva.app.advisor.message
 import com.aeriva.app.advisor.noteText
+import com.aeriva.app.advisor.title
 import com.aeriva.app.home.HomeUiState
 import com.aeriva.app.home.detailRows
 import com.aeriva.app.home.headlineRes
@@ -34,6 +37,7 @@ class MainActivity : Activity() {
     private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var collectJob: Job? = null
     private var advisorJob: Job? = null
+    private var networksJob: Job? = null
     private var settingsLaunched = false
 
     private lateinit var statusIndicator: View
@@ -50,6 +54,9 @@ class MainActivity : Activity() {
     private lateinit var advisorNote: TextView
     private lateinit var advisorAction: TextView
     private lateinit var advisorActionError: TextView
+
+    private lateinit var networksCard: View
+    private lateinit var networksContainer: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,6 +76,9 @@ class MainActivity : Activity() {
         advisorNote = findViewById(R.id.advisor_note)
         advisorAction = findViewById(R.id.advisor_action)
         advisorActionError = findViewById(R.id.advisor_action_error)
+
+        networksCard = findViewById(R.id.networks_card)
+        networksContainer = findViewById(R.id.networks_container)
 
         advisorAction.setOnClickListener { openNetworkSettings() }
         // The visible text is the label; the hint tells the user AERIVA does not
@@ -93,6 +103,10 @@ class MainActivity : Activity() {
         advisorJob = uiScope.launch {
             container.advisorState.uiState.collect { renderAdvisor(it) }
         }
+        networksJob?.cancel()
+        networksJob = uiScope.launch {
+            container.advisorState.networks.collect { renderNetworks(it) }
+        }
     }
 
     override fun onStop() {
@@ -100,6 +114,8 @@ class MainActivity : Activity() {
         collectJob = null
         advisorJob?.cancel()
         advisorJob = null
+        networksJob?.cancel()
+        networksJob = null
         super.onStop()
     }
 
@@ -124,6 +140,22 @@ class MainActivity : Activity() {
             detailsContainer.addView(view)
         }
         detailsCard.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * One row per network Android reports, in the order the holder gives
+     * (default first). The card stays hidden when there is nothing to list.
+     */
+    private fun renderNetworks(rows: List<NetworkRow>) {
+        networksContainer.removeAllViews()
+        rows.forEach { row ->
+            val view = LayoutInflater.from(this)
+                .inflate(R.layout.item_detail_row, networksContainer, false)
+            view.findViewById<TextView>(R.id.detail_label).text = row.title(this)
+            view.findViewById<TextView>(R.id.detail_value).text = row.detail(this)
+            networksContainer.addView(view)
+        }
+        networksCard.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
     }
 
     private fun renderAdvisor(state: AdvisorUiState) {

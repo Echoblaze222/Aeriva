@@ -47,16 +47,33 @@ sealed interface AdvisorUiState {
 }
 
 /**
+ * One line of the "Your networks" list: a network Android reports to the app,
+ * and only what Android reported about it. Nothing here is measured by AERIVA.
+ */
+data class NetworkRow(
+    val label: NetworkLabel,
+    val isDefault: Boolean,
+    val validated: Boolean,
+    val metered: Boolean,
+    val blockedByDevicePolicy: Boolean,
+    val captivePortalReported: Boolean
+)
+
+/**
  * Assigns the numbers in [NetworkLabel]. A candidate gets the next number for
  * its transport the first time it is seen and keeps it for the rest of the
  * session, so "Mobile data 2" never refers to a different network from one
  * minute to the next. Numbers are not reused and never persisted
  * (ADVISOR_UI_SPEC.md section 5.7, risk R-UI-2).
+ *
+ * Both the advisor card and the "Your networks" list use one instance from
+ * different coroutines, so every access is synchronized.
  */
 class NetworkLabeler {
     private val numbers = HashMap<CandidateNetworkId, Int>()
     private val counters = HashMap<TransportType, Int>()
 
+    @Synchronized
     fun update(candidates: List<CandidateNetwork>) {
         candidates.forEach { candidate ->
             numbers.getOrPut(candidate.id) {
@@ -67,6 +84,7 @@ class NetworkLabeler {
         }
     }
 
+    @Synchronized
     fun labelFor(
         id: CandidateNetworkId,
         transport: TransportType,
@@ -76,6 +94,15 @@ class NetworkLabeler {
         return NetworkLabel(transport, if (sameTransport > 1) numbers[id] else null)
     }
 }
+
+fun CandidateNetwork.toRow(all: List<CandidateNetwork>, labeler: NetworkLabeler): NetworkRow = NetworkRow(
+    label = labeler.labelFor(id, transport, all),
+    isDefault = isDefault,
+    validated = validated,
+    metered = metered,
+    blockedByDevicePolicy = blockedByDevicePolicy,
+    captivePortalReported = captivePortalReported
+)
 
 fun AdvisorOutcome.toUiState(candidates: List<CandidateNetwork>, labeler: NetworkLabeler): AdvisorUiState =
     when (this) {
