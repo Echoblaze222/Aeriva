@@ -4,6 +4,12 @@
   section 6.5). Lives in the debug source set so the release manifest is
   untouched: the release app does NOT declare PACKAGE_USAGE_STATS. Declaring it
   in a release build is decision DU-3 and waits for the Play Console check.
+
+  Experiment (probe v2, build 3): the <queries> entry below makes every app
+  that has a launcher icon visible under Android package visibility filtering,
+  without QUERY_ALL_PACKAGES. The first real device report resolved only 14 of
+  93 apps with traffic to a name. Running the probe again with this entry shows
+  how many more names it recovers.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -11,6 +17,13 @@
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <application>
         <activity
