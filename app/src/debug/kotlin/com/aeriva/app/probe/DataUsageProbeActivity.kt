@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.ConnectivityManager
+import android.net.TrafficStats
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
@@ -37,9 +38,14 @@ import java.util.concurrent.Executors
  *  - T14: how far back data exists (a probe by week, not an exact limit).
  *  - T15: the foreground split Android reports for the top apps.
  *
+ * Version 2 adds the per app Wi-Fi list (the first run found no mobile data, so
+ * name resolution could not be tested on mobile), the TrafficStats counters
+ * since boot (a permission free check on whether the phone counts mobile
+ * bytes at all) and a scan for the oldest day with data.
+ *
  * It makes no network request, writes nothing to disk and keeps no data. The
  * report is text on screen that the user can share by hand. It lists the names
- * of the top apps by mobile data, so the user decides whether to share it.
+ * of the top apps by data, so the user decides whether to share it.
  */
 @Suppress("DEPRECATION")
 class DataUsageProbeActivity : Activity() {
@@ -173,7 +179,7 @@ class DataUsageProbeActivity : Activity() {
         val lines = mutableListOf<String>()
         val now = System.currentTimeMillis()
         val day = DAY_MILLIS
-        lines += "AERIVA data usage probe v1"
+        lines += "AERIVA data usage probe v2"
         lines += "Time: " + SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US).format(Date(now))
         lines += "Device: ${Build.MANUFACTURER} ${Build.MODEL}"
         lines += "Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT}), patch ${Build.VERSION.SECURITY_PATCH}"
@@ -191,6 +197,11 @@ class DataUsageProbeActivity : Activity() {
         }
         lines += ""
 
+        lines += "TRAFFIC COUNTERS SINCE BOOT (TrafficStats, no permission needed)"
+        lines += "Mobile: rx ${counter(TrafficStats.getMobileRxBytes())}, tx ${counter(TrafficStats.getMobileTxBytes())}"
+        lines += "All interfaces: rx ${counter(TrafficStats.getTotalRxBytes())}, tx ${counter(TrafficStats.getTotalTxBytes())}"
+        lines += ""
+
         lines += "RETENTION PROBE (week ending N days ago, bytes seen)"
         for ((type, label) in types) {
             for (age in listOf(7L, 30L, 60L, 90L, 180L, 365L)) {
@@ -198,10 +209,21 @@ class DataUsageProbeActivity : Activity() {
                 lines += "$label week ending $age days ago: " + deviceTotal(manager, type, end - 7L * day, end)
             }
         }
+        var oldest = -1L
+        for (age in 80L..200L step 5L) {
+            val end = now - (age - 1L) * day
+            val bytes = deviceBytesOrNull(manager, ConnectivityManager.TYPE_WIFI, end - day, end)
+            if (bytes != null && bytes > 0L) oldest = age
+        }
+        lines += "Oldest 1-day Wi-Fi window with data (scan 80 to 200 days, step 5): " +
+            if (oldest < 0) "none found" else "$oldest days ago"
         lines += ""
 
         lines += "MOBILE DATA BY APP, LAST 30 DAYS"
-        lines += perAppSection(manager, now - 30L * day, now)
+        lines += perAppSection(manager, ConnectivityManager.TYPE_MOBILE, now - 30L * day, now)
+        lines += ""
+        lines += "WI-FI DATA BY APP, LAST 30 DAYS (tests name resolution while mobile is empty)"
+        lines += perAppSection(manager, ConnectivityManager.TYPE_WIFI, now - 30L * day, now)
         return lines.joinToString("\n")
     }
 
@@ -217,7 +239,18 @@ class DataUsageProbeActivity : Activity() {
         }
     }
 
-    private fun perAppSection(manager: NetworkStatsManager, start: Long, end: Long): List<String> {
+    private fun counter(value: Long): String =
+        if (value == TrafficStats.UNSUPPORTED.toLong()) "unsupported" else formatBytes(value)
+
+    private fun deviceBytesOrNull(manager: NetworkStatsManager, type: Int, start: Long, end: Long): Long? =
+        try {
+            val bucket = manager.querySummaryForDevice(type, null, start, end)
+            bucket.rxBytes + bucket.txBytes
+        } catch (failure: Exception) {
+            null
+        }
+
+    private fun perAppSection(manager: NetworkStatsManager, type: Int, start: Long, end: Long): List<String> {
         val out = mutableListOf<String>()
         val began = System.nanoTime()
         // Per uid: total, foreground, default (Android's own state labels).
@@ -226,7 +259,7 @@ class DataUsageProbeActivity : Activity() {
         var shortest = Long.MAX_VALUE
         var longest = 0L
         try {
-            val stats = manager.querySummary(ConnectivityManager.TYPE_MOBILE, null, start, end)
+            val stats = manager.querySummary(type, null, start, end)
             try {
                 val bucket = NetworkStats.Bucket()
                 while (stats.hasNextBucket()) {
