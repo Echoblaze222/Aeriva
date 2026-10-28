@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  "Recent changes" card: the latest changes in the connection, saved only on
+  this phone. Rules applied: no em dash, no emoji, no performance promise, only
+  what Android reported.
+-->
+<resources>
+    <string name="history_title">Recent changes</string>
+    <string name="history_no_connection">No connection</string>
+    <!-- %1$s is the network name, for example "Wi-Fi" or "Mobile data". -->
+    <string name="history_connected_passed">%1$s, Android\'s check passed</string>
+    <string name="history_connected_not_passed">%1$s, Android\'s check did not pass</string>
+    <string name="history_footer">Saved only on this phone.</string>
+    <string name="history_clear">Clear history</string>
+</resources>

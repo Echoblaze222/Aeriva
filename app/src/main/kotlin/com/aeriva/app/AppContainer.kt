@@ -3,7 +3,9 @@ package com.aeriva.app
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import com.aeriva.app.advisor.AdvisorStateHolder
+import com.aeriva.app.history.NetworkHistoryTracker
 import com.aeriva.app.home.HomeStateHolder
+import com.aeriva.core.database.NetworkHistoryRepositoryFactory
 import com.aeriva.core.logging.AndroidLogcatLogger
 import com.aeriva.network.monitor.AndroidNetworkMonitor
 import com.aeriva.network.monitor.ConnectionStateRepository
@@ -41,5 +43,12 @@ class AppContainer(context: Context) {
         candidates = candidateMonitor.observe(),
         stale = candidateMonitor.stale,
         scope = appScope
+    )
+
+    val networkHistory = NetworkHistoryTracker(
+        states = connectionState.state,
+        repository = NetworkHistoryRepositoryFactory.create(context, logger),
+        scope = appScope,
+        seed = connectionState.state.value
     )
 }

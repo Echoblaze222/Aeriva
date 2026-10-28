@@ -104,7 +104,8 @@ private fun NetworkLabel.text(context: Context): String {
     }
 }
 
-private fun TransportType.labelRes(): Int = when (this) {
+/** The plain name of a transport, shared by the advisor card and the history card. */
+internal fun TransportType.labelRes(): Int = when (this) {
     TransportType.WIFI -> R.string.transport_wifi
     TransportType.CELLULAR -> R.string.transport_cellular
     TransportType.ETHERNET -> R.string.transport_ethernet

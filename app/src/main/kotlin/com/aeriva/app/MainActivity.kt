@@ -20,11 +20,14 @@ import com.aeriva.app.advisor.indicatorColorRes
 import com.aeriva.app.advisor.message
 import com.aeriva.app.advisor.noteText
 import com.aeriva.app.advisor.title
+import com.aeriva.app.history.description
+import com.aeriva.app.history.timeText
 import com.aeriva.app.home.HomeUiState
 import com.aeriva.app.home.detailRows
 import com.aeriva.app.home.headlineRes
 import com.aeriva.app.home.indicatorColorRes
 import com.aeriva.app.home.messageRes
+import com.aeriva.core.database.NetworkStateHistoryRecord
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -38,6 +41,7 @@ class MainActivity : Activity() {
     private var collectJob: Job? = null
     private var advisorJob: Job? = null
     private var networksJob: Job? = null
+    private var historyJob: Job? = null
     private var settingsLaunched = false
 
     private lateinit var statusIndicator: View
@@ -57,6 +61,10 @@ class MainActivity : Activity() {
 
     private lateinit var networksCard: View
     private lateinit var networksContainer: LinearLayout
+
+    private lateinit var historyCard: View
+    private lateinit var historyContainer: LinearLayout
+    private lateinit var historyClear: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -80,7 +88,14 @@ class MainActivity : Activity() {
         networksCard = findViewById(R.id.networks_card)
         networksContainer = findViewById(R.id.networks_container)
 
+        historyCard = findViewById(R.id.history_card)
+        historyContainer = findViewById(R.id.history_container)
+        historyClear = findViewById(R.id.history_clear)
+
         advisorAction.setOnClickListener { openNetworkSettings() }
+        historyClear.setOnClickListener {
+            (application as AerivaApplication).container.networkHistory.clear()
+        }
         // The visible text is the label; the hint tells the user AERIVA does not
         // change the connection (ADVISOR_UI_SPEC.md section 6).
         advisorAction.accessibilityDelegate = object : View.AccessibilityDelegate() {
@@ -107,6 +122,10 @@ class MainActivity : Activity() {
         networksJob = uiScope.launch {
             container.advisorState.networks.collect { renderNetworks(it) }
         }
+        historyJob?.cancel()
+        historyJob = uiScope.launch {
+            container.networkHistory.recent.collect { renderHistory(it) }
+        }
     }
 
     override fun onStop() {
@@ -116,6 +135,8 @@ class MainActivity : Activity() {
         advisorJob = null
         networksJob?.cancel()
         networksJob = null
+        historyJob?.cancel()
+        historyJob = null
         super.onStop()
     }
 
@@ -156,6 +177,19 @@ class MainActivity : Activity() {
             networksContainer.addView(view)
         }
         networksCard.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    /** Newest first. The card stays hidden until something has been recorded. */
+    private fun renderHistory(records: List<NetworkStateHistoryRecord>) {
+        historyContainer.removeAllViews()
+        records.forEach { record ->
+            val view = LayoutInflater.from(this)
+                .inflate(R.layout.item_detail_row, historyContainer, false)
+            view.findViewById<TextView>(R.id.detail_label).text = record.timeText(this)
+            view.findViewById<TextView>(R.id.detail_value).text = record.description(this)
+            historyContainer.addView(view)
+        }
+        historyCard.visibility = if (records.isEmpty()) View.GONE else View.VISIBLE
     }
 
     private fun renderAdvisor(state: AdvisorUiState) {

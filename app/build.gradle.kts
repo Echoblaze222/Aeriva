@@ -50,6 +50,10 @@ dependencies {
     // `implementation`, so they are not transitively visible here.
     implementation(project(":core:model"))
     implementation(project(":core:logging"))
+    // Connection history: the existing Room backed history store and the
+    // result type its public interface returns. Project modules only.
+    implementation(project(":core:database"))
+    implementation(project(":core:result"))
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit4)
