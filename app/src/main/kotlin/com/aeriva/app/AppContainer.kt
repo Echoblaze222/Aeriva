@@ -5,8 +5,10 @@ import android.content.pm.ApplicationInfo
 import com.aeriva.app.advisor.AdvisorStateHolder
 import com.aeriva.app.history.NetworkHistoryTracker
 import com.aeriva.app.home.HomeStateHolder
+import com.aeriva.app.settings.AppSettings
 import com.aeriva.core.database.NetworkHistoryRepositoryFactory
 import com.aeriva.core.logging.AndroidLogcatLogger
+import com.aeriva.core.preferences.AerivaPreferencesFactory
 import com.aeriva.network.monitor.AndroidNetworkMonitor
 import com.aeriva.network.monitor.ConnectionStateRepository
 import com.aeriva.network.monitor.advisor.AndroidAvailableNetworksMonitor
@@ -45,10 +47,16 @@ class AppContainer(context: Context) {
         scope = appScope
     )
 
+    val settings = AppSettings(
+        preferences = AerivaPreferencesFactory.create(context, logger, appScope),
+        scope = appScope
+    )
+
     val networkHistory = NetworkHistoryTracker(
         states = connectionState.state,
         repository = NetworkHistoryRepositoryFactory.create(context, logger),
         scope = appScope,
-        seed = connectionState.state.value
+        seed = connectionState.state.value,
+        recordingEnabled = settings.historyEnabled
     )
 }

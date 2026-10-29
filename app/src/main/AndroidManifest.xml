@@ -16,7 +16,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Aeriva">
 
-        <!-- The only exported component: the launcher entry point. -->
+        <!-- The launcher entry point. -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -25,6 +25,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Opened only from inside the app. -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
+        <activity
+            android:name=".AboutActivity"
+            android:exported="false" />
 
     </application>
 

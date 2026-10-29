@@ -7,6 +7,7 @@ import android.content.res.ColorStateList
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.format.DateUtils
 import android.view.LayoutInflater
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
@@ -27,6 +28,7 @@ import com.aeriva.app.home.detailRows
 import com.aeriva.app.home.headlineRes
 import com.aeriva.app.home.indicatorColorRes
 import com.aeriva.app.home.messageRes
+import com.aeriva.app.share.buildStatusReport
 import com.aeriva.core.database.NetworkStateHistoryRecord
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,7 +44,12 @@ class MainActivity : Activity() {
     private var advisorJob: Job? = null
     private var networksJob: Job? = null
     private var historyJob: Job? = null
+    private var welcomeJob: Job? = null
     private var settingsLaunched = false
+
+    // The latest of what the screen shows, so "Share status" reports exactly that.
+    private var latestHome: HomeUiState? = null
+    private var latestNetworks: List<NetworkRow> = emptyList()
 
     private lateinit var statusIndicator: View
     private lateinit var statusHeadline: TextView
@@ -65,6 +72,8 @@ class MainActivity : Activity() {
     private lateinit var historyCard: View
     private lateinit var historyContainer: LinearLayout
     private lateinit var historyClear: TextView
+
+    private lateinit var welcomeCard: View
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,9 +101,18 @@ class MainActivity : Activity() {
         historyContainer = findViewById(R.id.history_container)
         historyClear = findViewById(R.id.history_clear)
 
+        welcomeCard = findViewById(R.id.welcome_card)
+
+        val container = (application as AerivaApplication).container
         advisorAction.setOnClickListener { openNetworkSettings() }
-        historyClear.setOnClickListener {
-            (application as AerivaApplication).container.networkHistory.clear()
+        historyClear.setOnClickListener { container.networkHistory.clear() }
+        findViewById<View>(R.id.welcome_dismiss).setOnClickListener { container.settings.dismissWelcome() }
+        findViewById<View>(R.id.action_share).setOnClickListener { shareStatus() }
+        findViewById<View>(R.id.action_settings).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+        findViewById<View>(R.id.action_about).setOnClickListener {
+            startActivity(Intent(this, AboutActivity::class.java))
         }
         // The visible text is the label; the hint tells the user AERIVA does not
         // change the connection (ADVISOR_UI_SPEC.md section 6).
@@ -126,6 +144,14 @@ class MainActivity : Activity() {
         historyJob = uiScope.launch {
             container.networkHistory.recent.collect { renderHistory(it) }
         }
+        welcomeJob?.cancel()
+        welcomeJob = uiScope.launch {
+            // Shown only once the stored value is known to be "not dismissed",
+            // so a returning user never sees it flash.
+            container.settings.welcomeDismissed.collect { dismissed ->
+                welcomeCard.visibility = if (dismissed == false) View.VISIBLE else View.GONE
+            }
+        }
     }
 
     override fun onStop() {
@@ -137,6 +163,8 @@ class MainActivity : Activity() {
         networksJob = null
         historyJob?.cancel()
         historyJob = null
+        welcomeJob?.cancel()
+        welcomeJob = null
         super.onStop()
     }
 
@@ -146,6 +174,7 @@ class MainActivity : Activity() {
     }
 
     private fun render(state: HomeUiState) {
+        latestHome = state
         statusHeadline.setText(state.headlineRes())
         statusMessage.setText(state.messageRes())
         statusIndicator.backgroundTintList =
@@ -168,6 +197,7 @@ class MainActivity : Activity() {
      * (default first). The card stays hidden when there is nothing to list.
      */
     private fun renderNetworks(rows: List<NetworkRow>) {
+        latestNetworks = rows
         networksContainer.removeAllViews()
         rows.forEach { row ->
             val view = LayoutInflater.from(this)
@@ -225,6 +255,33 @@ class MainActivity : Activity() {
         advisorAction.visibility = actionVisibility
         // A failure line belongs to the card state it was shown for.
         advisorActionError.visibility = View.GONE
+    }
+
+    /**
+     * Sends exactly what the screen shows as plain text, through the system
+     * share sheet. Nothing is measured or added, and nothing is sent unless the
+     * user picks a destination.
+     */
+    private fun shareStatus() {
+        val state = latestHome ?: return
+        val time = DateUtils.formatDateTime(
+            this,
+            System.currentTimeMillis(),
+            DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_ALL
+        )
+        val report = buildStatusReport(
+            title = getString(R.string.share_report_title),
+            headline = getString(state.headlineRes()),
+            message = getString(state.messageRes()),
+            networksTitle = getString(R.string.networks_title),
+            networkLines = latestNetworks.map { "${it.title(this)}: ${it.detail(this).replace("\n", ", ")}" },
+            footer = getString(R.string.share_report_footer, time)
+        )
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, report)
+        }
+        startActivity(Intent.createChooser(send, getString(R.string.share_chooser_title)))
     }
 
     /**
