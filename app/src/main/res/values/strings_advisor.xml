@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network Advisor card copy. Written by Agent 6 (branch
+  design/advisor-ui-and-brand-signoff @ 1a626c1), copied here unchanged apart
+  from this comment, because the card is now wired.
+  Rules applied: no em dash, no emoji, no performance promise, no claim
+  that AERIVA measured anything. Wording for a recommendation follows
+  leader decision L3.
+  Argument order is fixed: %1$s is always the network being suggested,
+  %2$s is always the current network. Network names come from the existing
+  transport_* strings, or from advisor_network_label_numbered when two
+  candidates share a transport.
+-->
+<resources>
+    <!-- Shown in sentence case; the layout applies textAllCaps so that
+         TalkBack reads words, not letters. -->
+    <string name="advisor_card_title">Network Advisor</string>
+    <!-- Same transport, more than one candidate: "Mobile data 2". The number
+         is assigned by first appearance in the current session, never
+         persisted, and never tied to a carrier or SIM name. -->
+    <string name="advisor_network_label_numbered">%1$s %2$d</string>
+    <!-- State: idle. Also used while the dwell time or cooldown is running. -->
+    <string name="advisor_idle_headline">No suggestion right now</string>
+    <string name="advisor_idle_message">Network Advisor speaks up when the current network has no confirmed internet and another network does.</string>
+    <!-- State: recommendation shown. -->
+    <string name="advisor_recommend_headline">Try %1$s instead</string>
+    <string name="advisor_recommend_message">%2$s has no confirmed internet right now. %1$s does.</string>
+    <string name="advisor_recommend_basis">Based on Android\'s own connectivity check</string>
+    <string name="advisor_recommend_action">Open network settings</string>
+    <string name="advisor_recommend_action_hint">Opens Android settings. AERIVA does not switch networks for you.</string>
+    <string name="advisor_recommend_action_failed">Network settings could not be opened on this device.</string>
+    <!-- State: single network. -->
+    <string name="advisor_single_headline">One network available</string>
+    <string name="advisor_single_message">Android reports one network, so there is nothing to compare.</string>
+    <!-- State: no network. -->
+    <string name="advisor_none_headline">No network to compare</string>
+    <string name="advisor_none_message">Network Advisor needs at least two networks. None is available right now.</string>
+    <string name="advisor_none_blocked_message">A device policy blocks every available network, so there is nothing to suggest.</string>
+    <!-- State: evidence insufficient. -->
+    <string name="advisor_insufficient_headline">Not enough information to compare</string>
+    <string name="advisor_insufficient_message">More than one network passed Android\'s check. AERIVA does not measure speed or delay in this version, so it cannot say which is better.</string>
+    <string name="advisor_insufficient_unknown_current_message">Android has not said which network is in use, so Network Advisor cannot compare.</string>
+    <string name="advisor_insufficient_vpn_message">A VPN is active on the current network, so a comparison of networks may not reflect how the VPN performs.</string>
+    <!-- Informational notes. Appended under the message, never a ranking. -->
+    <string name="advisor_note_vpn">A VPN is active. This comparison may not reflect how the VPN performs.</string>
+    <string name="advisor_note_metered">Some of these networks are metered and some are not.</string>
+    <!-- State: stale. -->
+    <string name="advisor_stale_headline">Suggestions paused</string>
+    <string name="advisor_stale_message">The list of networks may be out of date, so Network Advisor is not suggesting anything.</string>
+</resources>

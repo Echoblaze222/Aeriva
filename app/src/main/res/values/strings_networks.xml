@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  "Your networks" list: every network Android reports to the app, with only
+  what Android reported about it. No measurement, no ranking, no score.
+  Rules applied: no em dash, no emoji, no performance promise.
+-->
+<resources>
+    <string name="networks_title">Your networks</string>
+    <!-- %1$s is the network name, for example "Wi-Fi" or "Mobile data 2". -->
+    <string name="networks_row_in_use">%1$s (in use)</string>
+    <string name="networks_check_passed">Android\'s check passed</string>
+    <string name="networks_check_not_passed">Android\'s check did not pass</string>
+    <string name="networks_metered">Metered</string>
+    <string name="networks_not_metered">Not metered</string>
+    <string name="networks_sign_in_page">Sign-in page reported</string>
+    <string name="networks_blocked">Blocked by a device policy</string>
+</resources>

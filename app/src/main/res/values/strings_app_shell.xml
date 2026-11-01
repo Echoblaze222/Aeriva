@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Strings for the app shell: first run welcome, Home actions, Settings, About,
+  and the shared status report.
+  Rules applied: no em dash, no emoji, no performance promise, no claim that
+  AERIVA measured anything. Wording about Android's check follows the existing
+  status copy and leader decision L3.
+-->
+<resources>
+    <!-- First run welcome card -->
+    <string name="welcome_title">Welcome to AERIVA</string>
+    <string name="welcome_message">AERIVA tells you what Android reports about your connection, in plain words. It has no account, and what it shows stays on this phone.</string>
+    <string name="welcome_dismiss">Got it</string>
+
+    <!-- Home actions -->
+    <string name="action_share">Share status</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_about">About</string>
+
+    <!-- Share status. %1$s in the footer is a date and time. -->
+    <string name="share_report_title">AERIVA connection status</string>
+    <string name="share_report_footer">Reported by Android to AERIVA on %1$s.</string>
+    <string name="share_chooser_title">Share connection status</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_history_title">Save connection history</string>
+    <string name="settings_history_description">Keep the latest changes in your connection on this phone for 30 days. Nothing is sent anywhere.</string>
+    <string name="settings_clear_history">Clear history</string>
+    <!-- %1$s is the app version, for example 0.1.0. -->
+    <string name="settings_version">Version %1$s</string>
+
+    <!-- About -->
+    <string name="about_title">About AERIVA</string>
+    <string name="about_intro">AERIVA shows what Android reports about your connection, in plain words. It does not measure your speed and it does not change your connection.</string>
+    <string name="about_check_title">What Android\'s check means</string>
+    <string name="about_check_body">Android tests each network in the background to see whether it can reach the internet. A passed check means that test worked on that network. It does not guarantee that every app or website will load.</string>
+    <string name="about_advisor_title">Network Advisor</string>
+    <string name="about_advisor_body">When more than one network is available, the one in use did not pass Android\'s check and another one did, Network Advisor suggests the other one. It only opens Android\'s own settings, and you decide whether to switch. It waits a short moment before speaking up, so a brief drop does not trigger it.</string>
+    <string name="about_networks_title">Your networks</string>
+    <string name="about_networks_body">This list shows every network Android currently reports to AERIVA, with only the facts Android reports: whether its check passed, whether it is metered, and whether a sign-in page or a device policy was reported. Some phones keep mobile data off while Wi-Fi is connected, so you may see only one network.</string>
+    <string name="about_history_title">Recent changes</string>
+    <string name="about_history_body">AERIVA remembers the latest changes in your connection, only on this phone, and removes them after 30 days. You can turn this off or clear it in Settings.</string>
+    <string name="about_privacy_title">Privacy</string>
+    <string name="about_privacy_body">AERIVA has no account and does not ask for the internet permission. Nothing it shows leaves your phone unless you choose to share a status report yourself.</string>
+</resources>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Advisor card while it carries a recommendation: same card as
+  card_background with the ice blue stroke (ADVISOR_UI_SPEC.md section 4).
+  The stroke is a state signal, never the only one: the headline changes too.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/aeriva_surface" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/advisor_card_stroke_recommend" />
+    <corners android:radius="20dp" />
+</shape>

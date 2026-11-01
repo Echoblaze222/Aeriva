@@ -50,6 +50,15 @@ dependencies {
     // `implementation`, so they are not transitively visible here.
     implementation(project(":core:model"))
     implementation(project(":core:logging"))
+    // Connection history: the existing Room backed history store and the
+    // result type its public interface returns. Project modules only.
+    implementation(project(":core:database"))
+    implementation(project(":core:result"))
+    // Settings: the existing preferences module. Its public interface uses
+    // DataStore key types, so the already pinned catalog entry is needed here
+    // to name them. No new version is introduced.
+    implementation(project(":core:preferences"))
+    implementation(libs.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit4)

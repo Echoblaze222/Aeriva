@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network Advisor card colors. Written by Agent 6 (branch
+  design/advisor-ui-and-brand-signoff @ 1a626c1). Semantic aliases of colors
+  already in colors.xml. No new hex value is introduced here.
+-->
+<resources>
+    <color name="advisor_indicator_idle">@color/aeriva_unknown</color>
+    <color name="advisor_indicator_recommend">@color/aeriva_ice_blue</color>
+    <color name="advisor_indicator_single_network">@color/aeriva_unknown</color>
+    <color name="advisor_indicator_no_network">@color/aeriva_unknown</color>
+    <color name="advisor_indicator_insufficient">@color/aeriva_unknown</color>
+    <color name="advisor_indicator_stale">@color/aeriva_warning</color>
+    <color name="advisor_eyebrow_text">@color/aeriva_silver</color>
+    <color name="advisor_headline_text">@color/aeriva_white</color>
+    <color name="advisor_message_text">@color/aeriva_silver</color>
+    <color name="advisor_basis_text">@color/aeriva_silver</color>
+    <color name="advisor_action_text">@color/aeriva_ice_blue</color>
+    <color name="advisor_action_error_text">@color/aeriva_warning</color>
+    <color name="advisor_card_stroke_recommend">@color/aeriva_ice_blue</color>
+</resources>
